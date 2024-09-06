@@ -1,2 +1,0 @@
-Dataset_2/**/*.jpg filter=lfs diff=lfs merge=lfs -text
-Dataset_1/**/*.jpg filter=lfs diff=lfs merge=lfs -text
