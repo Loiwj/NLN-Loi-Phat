@@ -29,7 +29,7 @@ IMG_SIZE = (380, 380)
 BATCH_SIZE = 16
 NUM_CLASSES = 20
 EPOCHS = 40
-DATASET_PATH = '/content/drive/MyDrive/Medicine Chinese/NB-TCM-CHM/Dataset 2'  # Thay đường dẫn đến thư mục chứa dataset
+DATASET_PATH = 'D:\NL\NLN-Loi-Phat\Dataset_2'  # Thay đường dẫn đến thư mục chứa dataset
 
 # Hàm tiền xử lý ảnh
 def preprocess_image(image_path, target_size=IMG_SIZE):
