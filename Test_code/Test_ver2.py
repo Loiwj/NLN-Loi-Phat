@@ -104,4 +104,4 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
 train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs)
 
 # Bước 10: Lưu mô hình sau khi huấn luyện
-torch.save(model.state_dict(), '/content/drive/MyDrive/image_classification_model.pth')
+torch.save(model.state_dict(), '/content/NLN-Loi-Phat/image_classification_model.pth')
