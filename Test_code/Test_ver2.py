@@ -9,13 +9,9 @@ from torchvision import datasets, models, transforms
 from torch.utils.data import DataLoader, random_split
 import os
 
-# Bước 4: Đường dẫn tới thư mục chứa dữ liệu trên Google Drive hoặc upload trực tiếp
-# Nếu dữ liệu của bạn được lưu trữ trên Google Drive, bạn cần mount Google Drive
-from google.colab import drive
-drive.mount('/content/drive')
 
 # Đường dẫn tới thư mục chứa dữ liệu (ví dụ: '/content/drive/MyDrive/data')
-data_dir = '/content/drive/MyDrive/data'
+data_dir = '/content/NLN-Loi-Phat/Dataset_2'
 
 # Bước 5: Thiết lập các siêu tham số và cấu trúc dữ liệu
 batch_size = 32
