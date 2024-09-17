@@ -1,0 +1,124 @@
+Epoch 0/24
+----------
+train Loss: 1.1410 Acc: 0.6987 Precision: 0.6987 Recall: 0.6987 F1-Score: 0.6987
+val Loss: 0.5870 Acc: 0.8207 Precision: 0.8207 Recall: 0.8207 F1-Score: 0.8207
+
+Epoch 1/24
+----------
+train Loss: 0.3768 Acc: 0.8857 Precision: 0.8857 Recall: 0.8857 F1-Score: 0.8857
+val Loss: 0.6407 Acc: 0.7793 Precision: 0.7793 Recall: 0.7793 F1-Score: 0.7793
+
+Epoch 2/24
+----------
+train Loss: 0.2603 Acc: 0.9273 Precision: 0.9273 Recall: 0.9273 F1-Score: 0.9273
+val Loss: 0.3317 Acc: 0.9241 Precision: 0.9241 Recall: 0.9241 F1-Score: 0.9241
+
+Epoch 3/24
+----------
+train Loss: 0.2686 Acc: 0.9351 Precision: 0.9351 Recall: 0.9351 F1-Score: 0.9351
+val Loss: 0.4473 Acc: 0.8759 Precision: 0.8759 Recall: 0.8759 F1-Score: 0.8759
+
+Epoch 4/24
+----------
+train Loss: 0.2186 Acc: 0.9481 Precision: 0.9481 Recall: 0.9481 F1-Score: 0.9481
+val Loss: 0.0893 Acc: 0.9793 Precision: 0.9793 Recall: 0.9793 F1-Score: 0.9793
+
+Epoch 5/24
+----------
+train Loss: 0.1482 Acc: 0.9584 Precision: 0.9584 Recall: 0.9584 F1-Score: 0.9584
+val Loss: 0.3631 Acc: 0.9310 Precision: 0.9310 Recall: 0.9310 F1-Score: 0.9310
+
+Epoch 6/24
+----------
+train Loss: 0.1683 Acc: 0.9558 Precision: 0.9558 Recall: 0.9558 F1-Score: 0.9558
+val Loss: 0.4114 Acc: 0.8690 Precision: 0.8690 Recall: 0.8690 F1-Score: 0.8690
+
+Epoch 7/24
+----------
+train Loss: 0.3037 Acc: 0.9143 Precision: 0.9143 Recall: 0.9143 F1-Score: 0.9143
+val Loss: 1.0056 Acc: 0.7655 Precision: 0.7655 Recall: 0.7655 F1-Score: 0.7655
+
+Epoch 8/24
+----------
+train Loss: 0.2339 Acc: 0.9377 Precision: 0.9377 Recall: 0.9377 F1-Score: 0.9377
+val Loss: 0.1100 Acc: 0.9586 Precision: 0.9586 Recall: 0.9586 F1-Score: 0.9586
+
+Epoch 9/24
+----------
+train Loss: 0.1343 Acc: 0.9740 Precision: 0.9740 Recall: 0.9740 F1-Score: 0.9740
+val Loss: 0.0579 Acc: 0.9931 Precision: 0.9931 Recall: 0.9931 F1-Score: 0.9931
+
+Epoch 10/24
+----------
+train Loss: 0.1252 Acc: 0.9662 Precision: 0.9662 Recall: 0.9662 F1-Score: 0.9662
+val Loss: 0.0959 Acc: 0.9586 Precision: 0.9586 Recall: 0.9586 F1-Score: 0.9586
+
+Epoch 11/24
+----------
+train Loss: 0.1251 Acc: 0.9714 Precision: 0.9714 Recall: 0.9714 F1-Score: 0.9714
+val Loss: 0.3203 Acc: 0.9172 Precision: 0.9172 Recall: 0.9172 F1-Score: 0.9172
+
+Epoch 12/24
+----------
+train Loss: 0.1629 Acc: 0.9610 Precision: 0.9610 Recall: 0.9610 F1-Score: 0.9610
+val Loss: 0.0732 Acc: 0.9931 Precision: 0.9931 Recall: 0.9931 F1-Score: 0.9931
+
+Epoch 13/24
+----------
+train Loss: 0.1802 Acc: 0.9481 Precision: 0.9481 Recall: 0.9481 F1-Score: 0.9481
+val Loss: 0.3016 Acc: 0.8966 Precision: 0.8966 Recall: 0.8966 F1-Score: 0.8966
+
+Epoch 14/24
+----------
+train Loss: 0.1864 Acc: 0.9584 Precision: 0.9584 Recall: 0.9584 F1-Score: 0.9584
+val Loss: 0.2067 Acc: 0.9034 Precision: 0.9034 Recall: 0.9034 F1-Score: 0.9034
+
+Epoch 15/24
+----------
+train Loss: 0.1661 Acc: 0.9636 Precision: 0.9636 Recall: 0.9636 F1-Score: 0.9636
+val Loss: 0.1584 Acc: 0.9379 Precision: 0.9379 Recall: 0.9379 F1-Score: 0.9379
+
+Epoch 16/24
+----------
+train Loss: 0.1056 Acc: 0.9714 Precision: 0.9714 Recall: 0.9714 F1-Score: 0.9714
+val Loss: 0.0915 Acc: 0.9655 Precision: 0.9655 Recall: 0.9655 F1-Score: 0.9655
+
+Epoch 17/24
+----------
+train Loss: 0.0838 Acc: 0.9870 Precision: 0.9870 Recall: 0.9870 F1-Score: 0.9870
+val Loss: 0.0078 Acc: 1.0000 Precision: 1.0000 Recall: 1.0000 F1-Score: 1.0000
+
+Epoch 18/24
+----------
+train Loss: 0.1141 Acc: 0.9662 Precision: 0.9662 Recall: 0.9662 F1-Score: 0.9662
+val Loss: 0.0086 Acc: 1.0000 Precision: 1.0000 Recall: 1.0000 F1-Score: 1.0000
+
+Epoch 19/24
+----------
+train Loss: 0.1006 Acc: 0.9714 Precision: 0.9714 Recall: 0.9714 F1-Score: 0.9714
+val Loss: 0.0061 Acc: 1.0000 Precision: 1.0000 Recall: 1.0000 F1-Score: 1.0000
+
+Epoch 20/24
+----------
+train Loss: 0.0813 Acc: 0.9818 Precision: 0.9818 Recall: 0.9818 F1-Score: 0.9818
+val Loss: 0.0161 Acc: 1.0000 Precision: 1.0000 Recall: 1.0000 F1-Score: 1.0000
+
+Epoch 21/24
+----------
+train Loss: 0.1069 Acc: 0.9636 Precision: 0.9636 Recall: 0.9636 F1-Score: 0.9636
+val Loss: 0.0636 Acc: 0.9793 Precision: 0.9793 Recall: 0.9793 F1-Score: 0.9793
+
+Epoch 22/24
+----------
+train Loss: 0.1047 Acc: 0.9792 Precision: 0.9792 Recall: 0.9792 F1-Score: 0.9792
+val Loss: 0.0542 Acc: 0.9931 Precision: 0.9931 Recall: 0.9931 F1-Score: 0.9931
+
+Epoch 23/24
+----------
+train Loss: 0.1139 Acc: 0.9766 Precision: 0.9766 Recall: 0.9766 F1-Score: 0.9766
+val Loss: 0.0087 Acc: 1.0000 Precision: 1.0000 Recall: 1.0000 F1-Score: 1.0000
+
+Epoch 24/24
+----------
+train Loss: 0.1108 Acc: 0.9714 Precision: 0.9714 Recall: 0.9714 F1-Score: 0.9714
+val Loss: 0.0036 Acc: 1.0000 Precision: 1.0000 Recall: 1.0000 F1-Score: 1.0000
