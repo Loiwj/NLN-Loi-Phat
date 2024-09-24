@@ -58,12 +58,12 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     dataloaders = {'train': train_loader, 'val': val_loader}
     dataset_sizes = {'train': len(train_subset), 'val': len(val_subset)}
 
-    # Define your model, loss, and optimizer
+    # Define your model, loss, and optimizer (ResNet50 in this case)
     model = models.resnet50(pretrained=True)
 
-    # Modify the final layer to match the number of classes in your dataset
-    num_ftrs = model.classifier.in_features
-    model.classifier = nn.Linear(num_ftrs, len(dataset.classes))
+    # Modify the final layer (fc) to match the number of classes in your dataset
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, len(dataset.classes))
 
     # Move the model to GPU if available
     model = model.to(device)
@@ -129,7 +129,6 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
                     val_acc = epoch_acc
 
                 # Print the metrics for each phase
-                # Calculate additional metrics
                 from sklearn.metrics import precision_score, recall_score, f1_score
     
                 all_preds = []
@@ -154,8 +153,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         return model
 
     # Train the model
-    model = train_model(model, criterion, optimizer, num_epochs=25)
+    model = train_model(model, criterion, optimizer, num_epochs=50)
 
     # Save the trained model for the current fold
     torch.save(model.state_dict(), f'resnet50_fold_{fold + 1}.pth')
-

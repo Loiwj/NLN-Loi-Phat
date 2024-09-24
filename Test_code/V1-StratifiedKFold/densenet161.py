@@ -58,8 +58,8 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     dataloaders = {'train': train_loader, 'val': val_loader}
     dataset_sizes = {'train': len(train_subset), 'val': len(val_subset)}
 
-    # Define your model, loss, and optimizer (DenseNet121 in this case)
-    model = models.densenet121(pretrained=True)
+    # Define your model, loss, and optimizer (DenseNet161 in this case)
+    model = models.densenet161(pretrained=True)
 
     # Modify the final layer to match the number of classes in your dataset
     num_ftrs = model.classifier.in_features
@@ -157,5 +157,5 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     model = train_model(model, criterion, optimizer, num_epochs=50)
 
     # Save the trained model for the current fold
-    torch.save(model.state_dict(), f'densenet121_fold_{fold + 1}.pth')
+    torch.save(model.state_dict(), f'densenet161_fold_{fold + 1}.pth')
 
