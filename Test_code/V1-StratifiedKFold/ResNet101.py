@@ -153,7 +153,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         return model
 
     # Train the model
-    model = train_model(model, criterion, optimizer, num_epochs=50)
+    model = train_model(model, criterion, optimizer, num_epochs=25)
 
     # Save the trained model for the current fold
     torch.save(model.state_dict(), f'resnet101_fold_{fold + 1}.pth')
