@@ -17,8 +17,11 @@ data_transforms = {
     'train': transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
+        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.2),  # Thêm phép biến đổi màu sắc
+        transforms.RandomRotation(20),  # Thêm phép xoay ngẫu nhiên
+        transforms.RandomGrayscale(p=0.1),  # Thêm biến đổi thành ảnh xám với xác suất 10%
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])  # Chuẩn hóa
     ]),
     'val': transforms.Compose([
         transforms.Resize(256),
