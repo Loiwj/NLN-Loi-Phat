@@ -1,14 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import datasets, transforms, models
+from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
-from sklearn.model_selection import StratifiedKFold
-import os
-import numpy as np
 from efficientnet_pytorch import EfficientNet
+from sklearn.model_selection import StratifiedKFold
+import numpy as np
 
-# Check if GPU is available
+# Check if multiple GPUs are available
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f'Using device: {device}')
 
@@ -47,7 +46,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     # Create training and validation subsets
     train_subset = Subset(dataset, train_idx)
     val_subset = Subset(dataset, val_idx)
-    
+
     # Apply appropriate transformations to each subset
     train_subset.dataset.transform = data_transforms['train']
     val_subset.dataset.transform = data_transforms['val']
@@ -66,7 +65,12 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     num_ftrs = model._fc.in_features
     model._fc = nn.Linear(num_ftrs, len(dataset.classes))
 
-    # Move the model to GPU if available
+    # If more than 1 GPU is available, wrap the model in DataParallel
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs!")
+        model = nn.DataParallel(model)
+
+    # Move the model to GPU(s)
     model = model.to(device)
 
     # Define the loss function and optimizer
@@ -77,7 +81,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     def train_model(model, criterion, optimizer, num_epochs=25):
         for epoch in range(num_epochs):
             print(f'Epoch {epoch+1}/{num_epochs}')
-            print('-' * 30)  # Dấu phân cách giữa các epoch
+            print('-' * 30)  # Separator between epochs
             
             # Initialize to store metrics
             train_loss = 0.0
@@ -121,42 +125,12 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
                 epoch_loss = running_loss / dataset_sizes[phase]
                 epoch_acc = running_corrects.double() / dataset_sizes[phase]
 
-                # Update train/val loss and accuracy for final output
-                if phase == 'train':
-                    train_loss = epoch_loss
-                    train_acc = epoch_acc
-                else:
-                    val_loss = epoch_loss
-                    val_acc = epoch_acc
-
-                # Print the metrics for each phase
-                # Calculate additional metrics
-                from sklearn.metrics import precision_score, recall_score, f1_score
-    
-                all_preds = []
-                all_labels = []
-    
-                for inputs, labels in dataloaders[phase]:
-                    inputs = inputs.to(device)
-                    labels = labels.to(device)
-                    outputs = model(inputs)
-                    _, preds = torch.max(outputs, 1)
-                    all_preds.extend(preds.cpu().numpy())
-                    all_labels.extend(labels.cpu().numpy())
-    
-                precision = precision_score(all_labels, all_preds, average='weighted')
-                recall = recall_score(all_labels, all_preds, average='weighted')
-                f1 = f1_score(all_labels, all_preds, average='weighted')
-    
-                # Print the metrics for each phase
-                print(f'  {phase.capitalize()} Phase:')
-                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
-
+                # Print metrics for each phase
+                print(f'  {phase.capitalize()} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
         return model
 
     # Train the model
     model = train_model(model, criterion, optimizer, num_epochs=25)
 
     # Save the trained model for the current fold
-    torch.save(model.state_dict(), f'EfficientNet-B4_fold_{fold + 1}.pth')
-
+    torch.save(model.state_dict(), f'efficientnet_b4_fold_{fold + 1}.pth')
