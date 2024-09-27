@@ -111,12 +111,19 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
             self.fc = nn.Linear(1024, num_classes)
 
         def forward(self, x):
+            # Ensure the input has 4 dimensions: (batch_size, channels, height, width)
+            if x.dim() != 4:
+                raise ValueError(f"Input dimension should be 4, but got {x.dim()} dimensions")
+
             out1 = self.efficientnet(x)  # Output shape: (batch_size, 512)
             out2 = self.mobilenet(x)     # Output shape: (batch_size, 512)
+            
             print(f'out1 shape: {out1.shape}, out2 shape: {out2.shape}')  # Debugging line
+
             combined_out = torch.cat((out1, out2), dim=1)  # Shape: (batch_size, 1024)
             final_out = self.fc(combined_out)  # Shape: (batch_size, num_classes)
             return final_out
+
 
     # Initialize the combined model
     model = CombinedModel(efficientnet, mobilenet, num_classes=len(dataset.classes)).to(device)
