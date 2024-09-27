@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import datasets, transforms
+from torchvision import models, datasets, transforms
 from torch.utils.data import DataLoader, Subset
 from efficientnet_pytorch import EfficientNet
 from sklearn.model_selection import StratifiedKFold
@@ -65,20 +65,44 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     dataloaders = {'train': train_loader, 'val': val_loader}
     dataset_sizes = {'train': len(train_subset), 'val': len(val_subset)}
 
-    # Define your model, loss, and optimizer (EfficientNet-B5 in this case)
-    model = EfficientNet.from_pretrained('efficientnet-b5')
+    # Load EfficientNet-B5 and MobileNetV3 models
+    efficientnet = EfficientNet.from_pretrained('efficientnet-b5')
+    mobilenet = models.mobilenet_v3_large(pretrained=True)
 
-    # Modify the final layer to match the number of classes in your dataset
-    num_ftrs = model._fc.in_features
-    model._fc = nn.Linear(num_ftrs, len(dataset.classes))
+    # Modify the final layers of both models to match the number of classes
+    num_ftrs_efficient = efficientnet._fc.in_features
+    efficientnet._fc = nn.Linear(num_ftrs_efficient, 512)
 
-    # If more than 1 GPU is available, wrap the model in DataParallel
+    num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
+    mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 512)
+
+    # If more than 1 GPU is available, wrap the models in DataParallel
     if torch.cuda.device_count() > 1:
         print(f"Using {torch.cuda.device_count()} GPUs!")
-        model = nn.DataParallel(model)
+        efficientnet = nn.DataParallel(efficientnet)
+        mobilenet = nn.DataParallel(mobilenet)
 
-    # Move the model to GPU(s)
-    model = model.to(device)
+    # Move the models to GPU(s)
+    efficientnet = efficientnet.to(device)
+    mobilenet = mobilenet.to(device)
+
+    # Combined model that takes the outputs of both EfficientNet and MobileNetV3
+    class CombinedModel(nn.Module):
+        def __init__(self, efficientnet, mobilenet, num_classes):
+            super(CombinedModel, self).__init__()
+            self.efficientnet = efficientnet
+            self.mobilenet = mobilenet
+            self.fc = nn.Linear(512 * 2, num_classes)  # Concatenating outputs from both models
+
+        def forward(self, x):
+            out1 = self.efficientnet(x)
+            out2 = self.mobilenet(x)
+            combined_out = torch.cat((out1, out2), dim=1)  # Concatenating along the feature dimension
+            final_out = self.fc(combined_out)
+            return final_out
+
+    # Initialize the combined model
+    model = CombinedModel(efficientnet, mobilenet, num_classes=len(dataset.classes)).to(device)
 
     # Define the loss function and optimizer
     criterion = nn.CrossEntropyLoss()
@@ -181,7 +205,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     model = train_model(model, criterion, optimizer, scheduler, num_epochs=25)
 
     # Save the trained model for the current fold
-    torch.save(model.state_dict(), f'efficientnet_b5_fold_{fold + 1}.pth')
+    torch.save(model.state_dict(), f'combined_model_fold_{fold + 1}.pth')
 
     # Evaluate accuracy on the validation set
     evaluate_model(model, val_loader)
