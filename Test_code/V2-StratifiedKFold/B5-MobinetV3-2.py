@@ -109,14 +109,17 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
             super(CombinedModel, self).__init__()
             self.efficientnet = efficientnet
             self.mobilenet = mobilenet
-            self.fc = nn.Linear(512 * 2, num_classes)  # Concatenating outputs from both models
+            self.fc = nn.Linear(2560, num_classes)  # Updated to match concatenated feature size
 
         def forward(self, x):
             out1 = self.efficientnet(x)
             out2 = self.mobilenet(x)
-            combined_out = torch.cat((out1, out2), dim=1)  # Concatenating along the feature dimension
+            print(f'out1 shape: {out1.shape}, out2 shape: {out2.shape}')  # Debugging line
+            combined_out = torch.cat((out1, out2), dim=1)
             final_out = self.fc(combined_out)
             return final_out
+
+
 
     # Initialize the combined model
     model = CombinedModel(efficientnet, mobilenet, num_classes=len(dataset.classes)).to(device)
