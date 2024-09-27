@@ -74,16 +74,16 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     # Modify the final layers of both models to match the number of classes
     num_ftrs_efficient = efficientnet._fc.in_features
-    efficientnet._fc = nn.Linear(num_ftrs_efficient, 512)
+    efficientnet._fc = nn.Linear(num_ftrs_efficient, 1280)
 
     num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
-    mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 512)
+    mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 1280)
     # Add additional layers to the EfficientNet model
     efficientnet._fc = nn.Sequential(
         nn.Linear(num_ftrs_efficient, 1024),
         nn.ReLU(),
         nn.Dropout(0.5),
-        nn.Linear(1024, 512)
+        nn.Linear(1024, 1280)
     )
 
     # Add additional layers to the MobileNetV3 model
@@ -91,7 +91,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         nn.Linear(num_ftrs_mobilenet, 1024),
         nn.ReLU(),
         nn.Dropout(0.5),
-        nn.Linear(1024, 512)
+        nn.Linear(1024, 1280)
     )
     # If more than 1 GPU is available, wrap the models in DataParallel
     if torch.cuda.device_count() > 1:
