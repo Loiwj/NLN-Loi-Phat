@@ -18,7 +18,7 @@ data_transforms = {
         transforms.Resize((128, 128)),  # Resize tất cả ảnh về kích thước 128x128
         transforms.RandomHorizontalFlip(p=0.5),  # Lật ngẫu nhiên theo trục X với xác suất 50%
         transforms.RandomVerticalFlip(p=0.5),    # Lật ngẫu nhiên theo trục Y với xác suất 50%
-        transforms.RandomRotation(degrees=45, resample=False, expand=False, center=None),  # Xoay ngẫu nhiên quanh tâm ảnh
+        transforms.RandomRotation(degrees=45, expand=False, center=None),  # Xoay ngẫu nhiên quanh tâm ảnh
         transforms.RandomCrop(128),  # Cắt ngẫu nhiên ảnh sau khi đã resize
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])  # Chuẩn hóa
