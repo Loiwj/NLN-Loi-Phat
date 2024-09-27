@@ -74,16 +74,16 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     # Modify the final layers of both models to match the number of classes
     num_ftrs_efficient = efficientnet._fc.in_features
-    efficientnet._fc = nn.Linear(num_ftrs_efficient, 960)
+    efficientnet._fc = nn.Linear(num_ftrs_efficient, 1024)
 
     num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
-    mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 960)
+    mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 1024)
     # Add additional layers to the EfficientNet model
     efficientnet._fc = nn.Sequential(
         nn.Linear(num_ftrs_efficient, 512),
         nn.ReLU(),
         nn.Dropout(0.5),
-        nn.Linear(512, 960)
+        nn.Linear(512, 1024)
     )
 
     # Add additional layers to the MobileNetV3 model
@@ -91,7 +91,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         nn.Linear(num_ftrs_mobilenet, 512),
         nn.ReLU(),
         nn.Dropout(0.5),
-        nn.Linear(512, 960)
+        nn.Linear(512, 1024)
     )
     # If more than 1 GPU is available, wrap the models in DataParallel
     if torch.cuda.device_count() > 1:
@@ -109,15 +109,17 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
             super(CombinedModel, self).__init__()
             self.efficientnet = efficientnet
             self.mobilenet = mobilenet
-            self.fc = nn.Linear(2560, num_classes)  # Updated to match concatenated feature size
+            # Update fully connected layer to match concatenated feature size (1920)
+            self.fc = nn.Linear(1920, num_classes)
 
         def forward(self, x):
-            out1 = self.efficientnet(x)
-            out2 = self.mobilenet(x)
+            out1 = self.efficientnet(x)  # Output shape: (batch_size, 960)
+            out2 = self.mobilenet(x)     # Output shape: (batch_size, 960)
             print(f'out1 shape: {out1.shape}, out2 shape: {out2.shape}')  # Debugging line
-            combined_out = torch.cat((out1, out2), dim=1)
-            final_out = self.fc(combined_out)
+            combined_out = torch.cat((out1, out2), dim=1)  # Shape: (batch_size, 1920)
+            final_out = self.fc(combined_out)  # Shape: (batch_size, num_classes)
             return final_out
+
 
 
 
