@@ -21,15 +21,15 @@ data_transforms = {
     'train': transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
-        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.2),  # Thêm phép biến đổi màu sắc
-        transforms.RandomRotation(20),  # Thêm phép xoay ngẫu nhiên
-        transforms.RandomGrayscale(p=0.1),  # Thêm biến đổi thành ảnh xám với xác suất 10%
+        transforms.RandomRotation(30),
+        transforms.Resize((128, 128)),
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])  # Chuẩn hóa
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
     'val': transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),
+        transforms.Resize((128, 128)),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
@@ -42,7 +42,7 @@ image_dir = '/kaggle/working/NLN-Loi-Phat/Dataset_1/'  # Update this path
 dataset = datasets.ImageFolder(root=image_dir, transform=data_transforms['train'])
 
 # Get class indices and targets
-targets = dataset.targets  # Corrected from dataset.imgs
+targets = dataset.targets
 
 # Set up Stratified K-Fold
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -83,13 +83,12 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     # Define the loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    # Define the optimizer
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-    # Define the learning rate scheduler
+    # Add a learning rate scheduler
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
-
+    # Training loop
     def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
         for epoch in range(num_epochs):
             print(f'Epoch {epoch+1}/{num_epochs}')
@@ -154,9 +153,36 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
         return model
 
+    # Evaluate the model
+    def evaluate_model(model, dataloader):
+        model.eval()  # Đặt mô hình vào chế độ đánh giá (evaluation mode)
+        running_corrects = 0
+        total_samples = 0
+
+        with torch.no_grad():  # Tắt gradient để giảm bớt việc tính toán không cần thiết
+            for inputs, labels in dataloader:
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+
+                # Forward pass: Dự đoán kết quả
+                outputs = model(inputs)
+                _, preds = torch.max(outputs, 1)
+
+                # Thống kê số lượng dự đoán đúng
+                running_corrects += torch.sum(preds == labels.data)
+                total_samples += labels.size(0)
+
+        # Tính toán độ chính xác
+        accuracy = running_corrects.double() / total_samples
+        print(f'Accuracy of the model: {accuracy:.4f}')
+
+        return accuracy
 
     # Train the model
     model = train_model(model, criterion, optimizer, scheduler, num_epochs=25)
 
     # Save the trained model for the current fold
     torch.save(model.state_dict(), f'efficientnet_b4_fold_{fold + 1}.pth')
+
+    # Evaluate accuracy on the validation set
+    evaluate_model(model, val_loader)
