@@ -108,7 +108,9 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
         def forward(self, x):
             out1 = self.efficientnet(x)
+            print("EfficientNet output shape:", out1.shape)
             out2 = self.mobilenet(x)
+            print("MobileNet output shape:", out2.shape)
             combined_out = torch.cat((out1, out2), dim=1)
             final_out = self.fc(combined_out)
             return final_out
