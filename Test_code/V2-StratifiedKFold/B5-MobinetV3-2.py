@@ -81,6 +81,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     # Modify MobileNet
     num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
     mobilenet.classifier = nn.Sequential(
+        nn.Flatten(),  # Ensure input is flattened
         nn.Linear(num_ftrs_mobilenet, 1024),
         nn.ReLU(),
         nn.Dropout(0.5),
