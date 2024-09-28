@@ -188,7 +188,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         return accuracy
 
     # Train the model
-    model = train_model(model, criterion, optimizer, scheduler, num_epochs=25)
+    model = train_model(model, criterion, optimizer, scheduler, num_epochs=40)
 
     # Save the trained model for the current fold
     torch.save(model.state_dict(), f'efficientnet_b5_fold_{fold + 1}.pth')
