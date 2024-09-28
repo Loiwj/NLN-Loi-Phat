@@ -75,15 +75,19 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
     mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 512)
-    # Add additional layers to the models
+    # Add adaptive pooling and additional layers to the models
+    efficientnet._avg_pooling = nn.AdaptiveAvgPool2d(1)
     efficientnet._fc = nn.Sequential(
+        nn.Flatten(),
         nn.Linear(num_ftrs_efficient, 1024),
         nn.ReLU(),
         nn.Dropout(0.5),
         nn.Linear(1024, 512)
     )
 
+    mobilenet.avgpool = nn.AdaptiveAvgPool2d(1)
     mobilenet.classifier = nn.Sequential(
+        nn.Flatten(),
         nn.Linear(num_ftrs_mobilenet, 1024),
         nn.ReLU(),
         nn.Dropout(0.5),
@@ -181,8 +185,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
                 # Print the metrics for each phase
                 print(f'  {phase.capitalize()} Phase:')
-                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f}')
-                print(f'    Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
+                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
 
                 # Step the scheduler only during the training phase
                 if phase == 'train':
