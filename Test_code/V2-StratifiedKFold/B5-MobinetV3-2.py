@@ -22,8 +22,6 @@ data_transforms = {
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(30),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
-        transforms.RandomGrayscale(p=0.1),
         transforms.RandomVerticalFlip(),
         transforms.Resize((128, 128)),
         transforms.ToTensor(),
@@ -106,8 +104,8 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     class CombinedModel(nn.Module):
         def __init__(self, efficientnet, mobilenet, num_classes):
             super(CombinedModel, self).__init__()
-            self.efficientnet = efficientnet
             self.mobilenet = mobilenet
+            self.efficientnet = efficientnet
             self.fc = nn.Linear(1024, num_classes)
 
         def forward(self, x):
