@@ -71,6 +71,16 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     # Modify the final layer to match the number of classes in your dataset
     num_ftrs = model._fc.in_features
     model._fc = nn.Linear(num_ftrs, len(dataset.classes))
+    # Add more layers to the model to increase accuracy
+    model._fc = nn.Sequential(
+        nn.Linear(num_ftrs, 512),
+        nn.ReLU(),
+        nn.Dropout(0.2),
+        nn.Linear(512, 256),
+        nn.ReLU(),
+        nn.Dropout(0.2),
+        nn.Linear(256, len(dataset.classes))
+    )
 
     # If more than 1 GPU is available, wrap the model in DataParallel
     if torch.cuda.device_count() > 1:

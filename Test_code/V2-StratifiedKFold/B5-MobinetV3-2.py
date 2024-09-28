@@ -103,8 +103,8 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     class CombinedModel(nn.Module):
         def __init__(self, efficientnet, mobilenet):
             super(CombinedModel, self).__init__()
-            self.mobilenet = mobilenet
             self.efficientnet = efficientnet
+            self.mobilenet = mobilenet
             self.fc = nn.Linear(40, 20)  # 40 from concatenated outputs
 
         def forward(self, x):
