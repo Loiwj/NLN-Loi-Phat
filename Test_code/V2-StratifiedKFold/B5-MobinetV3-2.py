@@ -84,7 +84,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     # Get the in_features of MobileNet before modifying its classifier
     num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
     mobilenet.classifier = nn.Sequential(
-        nn.AdaptiveAvgPool2d((1024, 512)),  # Ensure the output is of shape (batch_size, 1280, 1, 1)
+        nn.AdaptiveAvgPool2d((1, 1)),  # Ensure the output is of shape 
         nn.Flatten(),  # Flatten the output to shape (batch_size, 1280)
         nn.Linear(num_ftrs_mobilenet, 1024),  # Reduce output size
         nn.ReLU(),
@@ -111,8 +111,8 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
             self.fc = nn.Linear(1024, num_classes)
 
         def forward(self, x):
-            out1 = self.efficientnet(x)  # Output shape: (batch_size, 512)
-            out2 = self.mobilenet(x)     # Output shape: (batch_size, 512)
+            out1 = self.efficientnet(x)  # Đảm bảo out1 có kích thước (batch_size, 512)
+            out2 = self.mobilenet(x)     # Đảm bảo out2 có kích thước (batch_size, 512)
             combined_out = torch.cat((out1, out2), dim=1)  # Shape: (batch_size, 1024)
             final_out = self.fc(combined_out)  # Shape: (batch_size, num_classes)
             return final_out
@@ -133,8 +133,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         for epoch in range(num_epochs):
             print(f'Epoch {epoch+1}/{num_epochs}')
             print('-' * 30)
-            
-            # Each epoch has a training and validation phase
+
             for phase in ['train', 'val']:
                 if phase == 'train':
                     model.train()  # Set model to training mode
@@ -149,6 +148,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
                 # Iterate over data
                 for inputs, labels in dataloaders[phase]:
+                    print("Input shape:", inputs.shape)  # In kích thước đầu vào
                     inputs = inputs.to(device)
                     labels = labels.to(device)
 
@@ -191,9 +191,31 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
                 if phase == 'train':
                     scheduler.step()
 
-        return model
+        # Evaluate the model
+        def evaluate_model(model, dataloader):
+            model.eval()  # Đặt mô hình vào chế độ đánh giá (evaluation mode)
+            running_corrects = 0
+            total_samples = 0
 
-    # Evaluate the model
+            with torch.no_grad():  # Tắt gradient để giảm bớt việc tính toán không cần thiết
+                for inputs, labels in dataloader:
+                    inputs = inputs.to(device)
+                    labels = labels.to(device)
+
+                    # Forward pass: Dự đoán kết quả
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)
+
+                    # Thống kê số lượng dự đoán đúng
+                    running_corrects += torch.sum(preds == labels.data)
+                    total_samples += labels.size(0)
+
+            # Tính toán độ chính xác
+            accuracy = running_corrects.double() / total_samples
+            print(f'Accuracy of the model: {accuracy:.4f}')
+
+            return accuracy
+        
     def evaluate_model(model, dataloader):
         model.eval()  # Đặt mô hình vào chế độ đánh giá (evaluation mode)
         running_corrects = 0
@@ -201,6 +223,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
         with torch.no_grad():  # Tắt gradient để giảm bớt việc tính toán không cần thiết
             for inputs, labels in dataloader:
+                print("Input shape:", inputs.shape)  # In kích thước đầu vào
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
@@ -226,3 +249,4 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     # Evaluate accuracy on the validation set
     evaluate_model(model, val_loader)
+
