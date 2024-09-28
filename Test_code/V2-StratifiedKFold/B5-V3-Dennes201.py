@@ -65,53 +65,60 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     dataloaders = {'train': train_loader, 'val': val_loader}
     dataset_sizes = {'train': len(train_subset), 'val': len(val_subset)}
 
-    # Load EfficientNet-B5 and MobileNetV3 models
+    # Load EfficientNet-B5, MobileNetV3, and DenseNet201 models
     efficientnet = EfficientNet.from_pretrained('efficientnet-b5')
     mobilenet = models.mobilenet_v3_large(pretrained=True)
+    densenet = models.densenet201(pretrained=True)
 
-    # Modify the final layers of both models to match the number of classes
+    # Modify the final layers of all models to match the number of classes
     num_ftrs_efficient = efficientnet._fc.in_features
     efficientnet._fc = nn.Linear(num_ftrs_efficient, 512)
 
     num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
     mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 512)
 
+    num_ftrs_densenet = densenet.classifier.in_features
+    densenet.classifier = nn.Linear(num_ftrs_densenet, 512)
+
     # If more than 1 GPU is available, wrap the models in DataParallel
     if torch.cuda.device_count() > 1:
         print(f"Using {torch.cuda.device_count()} GPUs!")
         efficientnet = nn.DataParallel(efficientnet)
         mobilenet = nn.DataParallel(mobilenet)
+        densenet = nn.DataParallel(densenet)
 
     # Move the models to GPU(s)
     efficientnet = efficientnet.to(device)
     mobilenet = mobilenet.to(device)
+    densenet = densenet.to(device)
 
-    # Combined model that takes the outputs of both EfficientNet and MobileNetV3
+    # Combined model that takes the outputs of EfficientNet, MobileNetV3, and DenseNet201
     class CombinedModel(nn.Module):
-        def __init__(self, efficientnet, mobilenet, num_classes):
+        def __init__(self, efficientnet, mobilenet, densenet, num_classes):
             super(CombinedModel, self).__init__()
             self.efficientnet = efficientnet
             self.mobilenet = mobilenet
-            self.fc = nn.Linear(512 * 2, num_classes)  # Concatenating outputs from both models
+            self.densenet = densenet
+            self.fc = nn.Linear(512 * 3, num_classes)  # Concatenating outputs from all three models
 
         def forward(self, x):
             out1 = self.efficientnet(x)
             out2 = self.mobilenet(x)
-            combined_out = torch.cat((out1, out2), dim=1)  # Concatenating along the feature dimension
+            out3 = self.densenet(x)
+            combined_out = torch.cat((out1, out2, out3), dim=1)  # Concatenating along the feature dimension
             final_out = self.fc(combined_out)
             return final_out
 
     # Initialize the combined model
-    model = CombinedModel(efficientnet, mobilenet, num_classes=len(dataset.classes)).to(device)
+    model = CombinedModel(efficientnet, mobilenet,densenet ,num_classes=len(dataset.classes)).to(device)
 
     # Define the loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=0.001)  # Sử dụng AdamW thay vì Adam
-    
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
 
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
     # Training loop
-    def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+    def train_model(model, criterion, optimizer, scheduler ,num_epochs=25):
         for epoch in range(num_epochs):
             print(f'Epoch {epoch+1}/{num_epochs}')
             print('-' * 30)
@@ -166,11 +173,12 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
                 # Print the metrics for each phase
                 print(f'  {phase.capitalize()} Phase:')
-                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
-
-                # Step the scheduler if in the validation phase
-                if phase == 'val':
-                    scheduler.step(epoch_loss)
+                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f}')
+                print(f'    Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
+            
+            if phase == 'train':
+                scheduler.step()
+                
 
         return model
 
@@ -200,7 +208,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         return accuracy
 
     # Train the model
-    model = train_model(model, criterion, optimizer,scheduler, num_epochs=50)
+    model = train_model(model, criterion, optimizer,scheduler, num_epochs=25)
 
     # Save the trained model for the current fold
     torch.save(model.state_dict(), f'combined_model_fold_{fold + 1}.pth')

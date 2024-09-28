@@ -59,8 +59,8 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     val_subset.dataset.transform = data_transforms['val']
 
     # Create DataLoader for training and validation
-    train_loader = DataLoader(train_subset, batch_size=16, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_subset, batch_size=16, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_subset, batch_size=32, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_subset, batch_size=32, shuffle=False, num_workers=4)
 
     dataloaders = {'train': train_loader, 'val': val_loader}
     dataset_sizes = {'train': len(train_subset), 'val': len(val_subset)}
@@ -114,13 +114,13 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     # Define the loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
     # Add a learning rate scheduler
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+    #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
     # Training loop
-    def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+    def train_model(model, criterion, optimizer, num_epochs=25):
         for epoch in range(num_epochs):
             print(f'Epoch {epoch+1}/{num_epochs}')
             print('-' * 30)
@@ -178,9 +178,9 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
                 print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f}')
                 print(f'    Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
 
-                # Step the scheduler only during the training phase
-                if phase == 'train':
-                    scheduler.step()
+                # # Step the scheduler only during the training phase
+                # if phase == 'train':
+                #     scheduler.step()
 
         return model
 
@@ -210,7 +210,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         return accuracy
 
     # Train the model
-    model = train_model(model, criterion, optimizer, scheduler, num_epochs=25)
+    model = train_model(model, criterion, optimizer, num_epochs=50)
 
     # Save the trained model for the current fold
     torch.save(model.state_dict(), f'combined_model_fold_{fold + 1}.pth')
