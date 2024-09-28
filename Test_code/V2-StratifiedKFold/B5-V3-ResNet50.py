@@ -65,80 +65,52 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     dataloaders = {'train': train_loader, 'val': val_loader}
     dataset_sizes = {'train': len(train_subset), 'val': len(val_subset)}
 
-    # Load EfficientNet-B5 and MobileNetV3 models
+    # Load EfficientNet-B5, MobileNetV3, and ResNet50 models
     efficientnet = EfficientNet.from_pretrained('efficientnet-b5')
     mobilenet = models.mobilenet_v3_large(pretrained=True)
+    resnet50 = models.resnet50(pretrained=True)
 
-    # Modify the final layers of both models to match the number of classes
+    # Modify the final layers of all models to match the number of classes
     num_ftrs_efficient = efficientnet._fc.in_features
     efficientnet._fc = nn.Linear(num_ftrs_efficient, 512)
 
     num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
     mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 512)
 
+    num_ftrs_resnet50 = resnet50.fc.in_features
+    resnet50.fc = nn.Linear(num_ftrs_resnet50, 512)
+
     # If more than 1 GPU is available, wrap the models in DataParallel
     if torch.cuda.device_count() > 1:
         print(f"Using {torch.cuda.device_count()} GPUs!")
         efficientnet = nn.DataParallel(efficientnet)
         mobilenet = nn.DataParallel(mobilenet)
+        resnet50 = nn.DataParallel(resnet50)
 
     # Move the models to GPU(s)
     efficientnet = efficientnet.to(device)
     mobilenet = mobilenet.to(device)
+    resnet50 = resnet50.to(device)
 
-    # Combined model that takes the outputs of both EfficientNet and MobileNetV3
+    # Combined model that takes the outputs of EfficientNet, MobileNetV3, and ResNet50
     class CombinedModel(nn.Module):
-        def __init__(self, efficientnet, mobilenet, num_classes):
+        def __init__(self, efficientnet, mobilenet, resnet50, num_classes):
             super(CombinedModel, self).__init__()
             self.efficientnet = efficientnet
             self.mobilenet = mobilenet
-
-            # Sử dụng global average pooling để giảm kích thước không gian
-            self.gap = nn.AdaptiveAvgPool2d((1, 1))
-
-            # Tổng hợp đầu ra của hai mô hình (2048 + 960)
-            combined_features = 2048 + 960
-
-            # Thêm một vài lớp fully connected
-            self.fc1 = nn.Linear(combined_features, 1024)  # Lớp ẩn đầu tiên
-            self.fc2 = nn.Linear(1024, 512)  # Lớp ẩn thứ hai
-            self.fc3 = nn.Linear(512, num_classes)  # Lớp cuối cùng tương ứng với số lượng class
+            self.resnet50 = resnet50
+            self.fc = nn.Linear(512 * 3, num_classes)  # Concatenating outputs from all models
 
         def forward(self, x):
-            # Kiểm tra nếu efficientnet có bị bọc bởi DataParallel
-            if isinstance(self.efficientnet, nn.DataParallel):
-                out1 = self.efficientnet.module.extract_features(x)
-            else:
-                out1 = self.efficientnet.extract_features(x)
-            
-            # Áp dụng global average pooling cho đầu ra EfficientNet
-            out1 = self.gap(out1)
-            out1 = out1.view(out1.size(0), -1)  # Flatten
-
-            # Tương tự cho MobileNet
-            if isinstance(self.mobilenet, nn.DataParallel):
-                out2 = self.mobilenet.module.features(x)
-            else:
-                out2 = self.mobilenet.features(x)
-            
-            # Áp dụng global average pooling cho đầu ra MobileNet
-            out2 = self.gap(out2)
-            out2 = out2.view(out2.size(0), -1)  # Flatten
-
-            # Kết hợp đầu ra của hai mô hình
-            combined_out = torch.cat((out1, out2), dim=1)  # Concatenating along the feature dimension
-
-            # Đi qua các lớp fully connected
-            x = self.fc1(combined_out)
-            x = nn.ReLU()(x)  # Hàm kích hoạt ReLU
-            x = self.fc2(x)
-            x = nn.ReLU()(x)  # ReLU cho lớp ẩn thứ hai
-            final_out = self.fc3(x)  # Lớp cuối cùng
-
+            out1 = self.efficientnet(x)
+            out2 = self.mobilenet(x)
+            out3 = self.resnet50(x)
+            combined_out = torch.cat((out1, out2, out3), dim=1)  # Concatenating along the feature dimension
+            final_out = self.fc(combined_out)
             return final_out
 
     # Initialize the combined model
-    model = CombinedModel(efficientnet, mobilenet, num_classes=len(dataset.classes)).to(device)
+    model = CombinedModel(efficientnet, mobilenet, resnet50, num_classes=len(dataset.classes)).to(device)
 
     # Define the loss function and optimizer
     criterion = nn.CrossEntropyLoss()
