@@ -75,24 +75,6 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
     mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 512)
-    # Add adaptive pooling and additional layers to the models
-    efficientnet._avg_pooling = nn.AdaptiveAvgPool2d(1)
-    efficientnet._fc = nn.Sequential(
-        nn.Flatten(),
-        nn.Linear(num_ftrs_efficient, 1024),
-        nn.ReLU(),
-        nn.Dropout(0.5),
-        nn.Linear(1024, 512)
-    )
-
-    mobilenet.avgpool = nn.AdaptiveAvgPool2d(1)
-    mobilenet.classifier = nn.Sequential(
-        nn.Flatten(),
-        nn.Linear(num_ftrs_mobilenet, 1024),
-        nn.ReLU(),
-        nn.Dropout(0.5),
-        nn.Linear(1024, 512)
-    )
 
     # If more than 1 GPU is available, wrap the models in DataParallel
     if torch.cuda.device_count() > 1:
@@ -110,14 +92,52 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
             super(CombinedModel, self).__init__()
             self.efficientnet = efficientnet
             self.mobilenet = mobilenet
-            self.fc = nn.Linear(512 * 2, num_classes)  # Concatenating outputs from both models
+
+            # Sử dụng global average pooling để giảm kích thước không gian
+            self.gap = nn.AdaptiveAvgPool2d((1, 1))
+
+            # Tổng hợp đầu ra của hai mô hình (2048 + 960)
+            combined_features = 2048 + 960
+
+            # Thêm một vài lớp fully connected
+            self.fc1 = nn.Linear(combined_features, 1024)  # Lớp ẩn đầu tiên
+            self.fc2 = nn.Linear(1024, 512)  # Lớp ẩn thứ hai
+            self.fc3 = nn.Linear(512, num_classes)  # Lớp cuối cùng tương ứng với số lượng class
 
         def forward(self, x):
-            out1 = self.efficientnet(x)
-            out2 = self.mobilenet(x)
+            # Kiểm tra nếu efficientnet có bị bọc bởi DataParallel
+            if isinstance(self.efficientnet, nn.DataParallel):
+                out1 = self.efficientnet.module.extract_features(x)
+            else:
+                out1 = self.efficientnet.extract_features(x)
+            
+            # Áp dụng global average pooling cho đầu ra EfficientNet
+            out1 = self.gap(out1)
+            out1 = out1.view(out1.size(0), -1)  # Flatten
+
+            # Tương tự cho MobileNet
+            if isinstance(self.mobilenet, nn.DataParallel):
+                out2 = self.mobilenet.module.features(x)
+            else:
+                out2 = self.mobilenet.features(x)
+            
+            # Áp dụng global average pooling cho đầu ra MobileNet
+            out2 = self.gap(out2)
+            out2 = out2.view(out2.size(0), -1)  # Flatten
+
+            # Kết hợp đầu ra của hai mô hình
             combined_out = torch.cat((out1, out2), dim=1)  # Concatenating along the feature dimension
-            final_out = self.fc(combined_out)
+
+            # Đi qua các lớp fully connected
+            x = self.fc1(combined_out)
+            x = nn.ReLU()(x)  # Hàm kích hoạt ReLU
+            x = self.fc2(x)
+            x = nn.ReLU()(x)  # ReLU cho lớp ẩn thứ hai
+            final_out = self.fc3(x)  # Lớp cuối cùng
+
             return final_out
+
+
 
     # Initialize the combined model
     model = CombinedModel(efficientnet, mobilenet, num_classes=len(dataset.classes)).to(device)
@@ -185,7 +205,8 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
                 # Print the metrics for each phase
                 print(f'  {phase.capitalize()} Phase:')
-                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
+                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f}')
+                print(f'    Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
 
                 # Step the scheduler only during the training phase
                 if phase == 'train':
