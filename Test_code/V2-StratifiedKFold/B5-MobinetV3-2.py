@@ -84,6 +84,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     # Get the in_features of MobileNet before modifying its classifier
     num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
     mobilenet.classifier = nn.Sequential(
+        nn.AdaptiveAvgPool2d((1024, 512)),  # Ensure the output is of shape (batch_size, 1280, 1, 1)
         nn.Flatten(),  # Flatten the output to shape (batch_size, 1280)
         nn.Linear(num_ftrs_mobilenet, 1024),  # Reduce output size
         nn.ReLU(),
