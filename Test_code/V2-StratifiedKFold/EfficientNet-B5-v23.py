@@ -73,13 +73,25 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     model._fc = nn.Linear(num_ftrs, len(dataset.classes))
     # Add more layers to the model to increase accuracy
     model._fc = nn.Sequential(
-        nn.Linear(num_ftrs, 512),
+        nn.Linear(num_ftrs, 2048),
         nn.ReLU(),
-        nn.Dropout(0.2),
+        nn.Dropout(0.3),
+        nn.Linear(2048, 1024),
+        nn.ReLU(),
+        nn.Dropout(0.3),
+        nn.Linear(1024, 512),
+        nn.ReLU(),
+        nn.Dropout(0.3),
         nn.Linear(512, 256),
         nn.ReLU(),
-        nn.Dropout(0.2),
-        nn.Linear(256, len(dataset.classes))
+        nn.Dropout(0.3),
+        nn.Linear(256, 128),
+        nn.ReLU(),
+        nn.Dropout(0.3),
+        nn.Linear(128, 64),
+        nn.ReLU(),
+        nn.Dropout(0.3),
+        nn.Linear(64, len(dataset.classes))
     )
 
     # If more than 1 GPU is available, wrap the model in DataParallel
