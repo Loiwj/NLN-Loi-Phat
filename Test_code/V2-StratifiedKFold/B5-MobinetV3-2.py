@@ -23,6 +23,9 @@ data_transforms = {
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(30),
         transforms.Resize((128, 128)),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
+        transforms.RandomAffine(degrees=30, translate=(0.1, 0.1), shear=10),
+        transforms.GaussianBlur(3),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
@@ -59,8 +62,8 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     val_subset.dataset.transform = data_transforms['val']
 
     # Create DataLoader for training and validation
-    train_loader = DataLoader(train_subset, batch_size=16, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_subset, batch_size=16, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_subset, batch_size=64, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_subset, batch_size=64, shuffle=False, num_workers=4)
 
     dataloaders = {'train': train_loader, 'val': val_loader}
     dataset_sizes = {'train': len(train_subset), 'val': len(val_subset)}
@@ -68,6 +71,27 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     # Load EfficientNet-B5 and MobileNetV3 models
     efficientnet = EfficientNet.from_pretrained('efficientnet-b5')
     mobilenet = models.mobilenet_v3_large(pretrained=True)
+    
+    # Fine-tune thêm các lớp sâu hơn của EfficientNet và MobileNetV3
+    for param in efficientnet.parameters():
+        param.requires_grad = False  # Đóng băng các lớp đầu tiên
+
+    # Fine-tune từ lớp 30 trở đi của EfficientNet
+    for param in efficientnet._blocks[30:].parameters():
+        param.requires_grad = True
+
+    # Fine-tune lớp fully-connected cuối cùng
+    for param in efficientnet._fc.parameters():
+        param.requires_grad = True
+
+    # Fine-tune từ các lớp middle trở đi của MobileNetV3
+    for param in mobilenet.features[12:].parameters():
+        param.requires_grad = True
+
+    # Fine-tune lớp classifier cuối cùng của MobileNetV3
+    for param in mobilenet.classifier.parameters():
+        param.requires_grad = True
+
 
     # Modify the final layers of both models to match the number of classes
     num_ftrs_efficient = efficientnet._fc.in_features
@@ -92,49 +116,13 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
             super(CombinedModel, self).__init__()
             self.efficientnet = efficientnet
             self.mobilenet = mobilenet
-
-            # Sử dụng global average pooling để giảm kích thước không gian
-            self.gap = nn.AdaptiveAvgPool2d((1, 1))
-
-            # Tổng hợp đầu ra của hai mô hình (2048 + 960)
-            combined_features = 2048 + 960
-
-            # Thêm một vài lớp fully connected
-            self.fc1 = nn.Linear(combined_features, 1024)  # Lớp ẩn đầu tiên
-            self.fc2 = nn.Linear(1024, 512)  # Lớp ẩn thứ hai
-            self.fc3 = nn.Linear(512, num_classes)  # Lớp cuối cùng tương ứng với số lượng class
+            self.fc = nn.Linear(512 * 2, num_classes)  # Concatenating outputs from both models
 
         def forward(self, x):
-            # Kiểm tra nếu efficientnet có bị bọc bởi DataParallel
-            if isinstance(self.efficientnet, nn.DataParallel):
-                out1 = self.efficientnet.module.extract_features(x)
-            else:
-                out1 = self.efficientnet.extract_features(x)
-            
-            # Áp dụng global average pooling cho đầu ra EfficientNet
-            out1 = self.gap(out1)
-            out1 = out1.view(out1.size(0), -1)  # Flatten
-
-            # Tương tự cho MobileNet
-            if isinstance(self.mobilenet, nn.DataParallel):
-                out2 = self.mobilenet.module.features(x)
-            else:
-                out2 = self.mobilenet.features(x)
-            
-            # Áp dụng global average pooling cho đầu ra MobileNet
-            out2 = self.gap(out2)
-            out2 = out2.view(out2.size(0), -1)  # Flatten
-
-            # Kết hợp đầu ra của hai mô hình
+            out1 = self.efficientnet(x)
+            out2 = self.mobilenet(x)
             combined_out = torch.cat((out1, out2), dim=1)  # Concatenating along the feature dimension
-
-            # Đi qua các lớp fully connected
-            x = self.fc1(combined_out)
-            x = nn.ReLU()(x)  # Hàm kích hoạt ReLU
-            x = self.fc2(x)
-            x = nn.ReLU()(x)  # ReLU cho lớp ẩn thứ hai
-            final_out = self.fc3(x)  # Lớp cuối cùng
-
+            final_out = self.fc(combined_out)
             return final_out
 
     # Initialize the combined model
@@ -142,10 +130,18 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     # Define the loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    # Sử dụng tốc độ học khác nhau cho các phần của mô hình
+    optimizer = optim.AdamW([
+        {'params': efficientnet._blocks[30:].parameters(), 'lr': 1e-5},  # Lớp giữa học chậm hơn
+        {'params': efficientnet._fc.parameters(), 'lr': 1e-3},  # Lớp cuối học nhanh hơn
+        {'params': mobilenet.features[12:].parameters(), 'lr': 1e-5},  # Lớp giữa của MobileNet học chậm hơn
+        {'params': mobilenet.classifier.parameters(), 'lr': 1e-3}  # Lớp cuối cùng của MobileNet học nhanh hơn
+    ])
 
-    # Add a learning rate scheduler
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+    
+    # Điều chỉnh scheduler theo phương pháp giảm tốc độ học dựa trên mất mát
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
+
 
     # Training loop
     def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
@@ -203,12 +199,11 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
                 # Print the metrics for each phase
                 print(f'  {phase.capitalize()} Phase:')
-                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f}')
-                print(f'    Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
+                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
 
-                # Step the scheduler only during the training phase
-                if phase == 'train':
-                    scheduler.step()
+                # Step the scheduler if in the validation phase
+                if phase == 'val':
+                    scheduler.step(epoch_loss)
 
         return model
 
@@ -238,7 +233,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         return accuracy
 
     # Train the model
-    model = train_model(model, criterion, optimizer, scheduler, num_epochs=25)
+    model = train_model(model, criterion, optimizer,scheduler, num_epochs=50)
 
     # Save the trained model for the current fold
     torch.save(model.state_dict(), f'combined_model_fold_{fold + 1}.pth')

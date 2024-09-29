@@ -21,9 +21,13 @@ data_transforms = {
     'train': transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(20),  # Thêm phép xoay ngẫu nhiên
+        transforms.RandomRotation(30),
+        transforms.Resize((128, 128)),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
+        transforms.RandomAffine(degrees=30, translate=(0.1, 0.1), shear=10),
+        transforms.GaussianBlur(3),
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])  # Chuẩn hóa
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
     'val': transforms.Compose([
         transforms.Resize(256),
@@ -58,8 +62,8 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     val_subset.dataset.transform = data_transforms['val']
 
     # Create DataLoader for training and validation
-    train_loader = DataLoader(train_subset, batch_size=16, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_subset, batch_size=16, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_subset, batch_size=32, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_subset, batch_size=32, shuffle=False, num_workers=4)
 
     dataloaders = {'train': train_loader, 'val': val_loader}
     dataset_sizes = {'train': len(train_subset), 'val': len(val_subset)}
@@ -67,6 +71,17 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     # Load EfficientNet-B5 and MobileNetV3 models
     efficientnet = EfficientNet.from_pretrained('efficientnet-b5')
     mobilenet = models.mobilenet_v3_large(pretrained=True)
+
+    # Fine-tune the deeper layers of both models
+    for param in efficientnet.parameters():
+        param.requires_grad = False
+    for param in efficientnet._fc.parameters():
+        param.requires_grad = True
+
+    for param in mobilenet.parameters():
+        param.requires_grad = False
+    for param in mobilenet.classifier.parameters():
+        param.requires_grad = True
 
     # Modify the final layers of both models to match the number of classes
     num_ftrs_efficient = efficientnet._fc.in_features
@@ -105,10 +120,12 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     # Define the loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)
+    optimizer = optim.AdamW(model.parameters(), lr=0.001)  # Sử dụng AdamW thay vì Adam
+    
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
     # Training loop
-    def train_model(model, criterion, optimizer, num_epochs=25):
+    def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
         for epoch in range(num_epochs):
             print(f'Epoch {epoch+1}/{num_epochs}')
             print('-' * 30)
@@ -163,10 +180,11 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
                 # Print the metrics for each phase
                 print(f'  {phase.capitalize()} Phase:')
-                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f}')
-                print(f'    Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
+                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
 
-
+                # Step the scheduler if in the validation phase
+                if phase == 'val':
+                    scheduler.step(epoch_loss)
 
         return model
 
@@ -196,7 +214,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         return accuracy
 
     # Train the model
-    model = train_model(model, criterion, optimizer, num_epochs=50)
+    model = train_model(model, criterion, optimizer,scheduler, num_epochs=50)
 
     # Save the trained model for the current fold
     torch.save(model.state_dict(), f'combined_model_fold_{fold + 1}.pth')
