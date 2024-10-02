@@ -8,9 +8,12 @@ from sklearn.model_selection import StratifiedKFold
 import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
 import warnings
+import copy
 
-# Vô hiệu hóa cảnh báo FutureWarning
+# Vô hiệu hóa cảnh báo FutureWarning,UserWarning, DeprecationWarning
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Check if multiple GPUs are available
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -26,6 +29,9 @@ data_transforms = {
         transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
         transforms.RandomAffine(degrees=30, translate=(0.1, 0.1), shear=10),
         transforms.GaussianBlur(3),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomErasing(p=0.5),
+        transforms.RandomPerspective(distortion_scale=0.5, p=0.5),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
@@ -48,6 +54,77 @@ targets = dataset.targets
 
 # Set up Stratified K-Fold
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+# Early Stopping parameters
+class EarlyStopping:
+    def __init__(self, patience=10, verbose=False, delta=0):
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+        self.delta = delta
+        self.best_model_wts = None
+
+    def __call__(self, val_loss, model):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+            self.best_model_wts = copy.deepcopy(model.state_dict())
+        elif val_loss < self.best_loss - self.delta:
+            self.best_loss = val_loss
+            self.best_model_wts = copy.deepcopy(model.state_dict())
+            self.counter = 0
+            if self.verbose:
+                print(f'Validation loss decreased. Reset counter.')
+        else:
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+
+# Combined model that takes the outputs of both EfficientNet and MobileNetV3
+class CombinedModel(nn.Module):
+    def __init__(self, efficientnet, mobilenet, num_classes):
+        super(CombinedModel, self).__init__()
+        self.efficientnet = efficientnet
+        self.mobilenet = mobilenet
+        self.fc1 = nn.Linear(512 * 2, 4096)
+        self.bn1 = nn.BatchNorm1d(4096)
+        self.dropout1 = nn.Dropout(0.3)
+        self.fc2 = nn.Linear(4096, 2048)
+        self.bn2 = nn.BatchNorm1d(2048)
+        self.dropout2 = nn.Dropout(0.3)
+        self.fc3 = nn.Linear(2048, 1024)
+        self.bn3 = nn.BatchNorm1d(1024)
+        self.dropout3 = nn.Dropout(0.3)
+        self.fc4 = nn.Linear(1024, 512)
+        self.bn4 = nn.BatchNorm1d(512)
+        self.dropout4 = nn.Dropout(0.3)
+        self.fc5 = nn.Linear(512, num_classes)  # Final output layer
+
+    def forward(self, x):
+        out1 = self.efficientnet(x)
+        out2 = self.mobilenet(x)
+        combined_out = torch.cat((out1, out2), dim=1).contiguous()  # Ensure tensor is contiguous
+        combined_out = self.fc1(combined_out)
+        combined_out = self.bn1(combined_out)
+        combined_out = torch.relu(combined_out)
+        combined_out = self.dropout1(combined_out)
+        combined_out = self.fc2(combined_out)
+        combined_out = self.bn2(combined_out)
+        combined_out = torch.relu(combined_out)
+        combined_out = self.dropout2(combined_out)
+        combined_out = self.fc3(combined_out)
+        combined_out = self.bn3(combined_out)
+        combined_out = torch.relu(combined_out)
+        combined_out = self.dropout3(combined_out)
+        combined_out = self.fc4(combined_out)
+        combined_out = self.bn4(combined_out)
+        combined_out = torch.relu(combined_out)
+        combined_out = self.dropout4(combined_out)
+        final_out = self.fc5(combined_out)
+        return final_out
 
 # Get training and validation indices
 for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), targets)):
@@ -72,26 +149,12 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     efficientnet = EfficientNet.from_pretrained('efficientnet-b5')
     mobilenet = models.mobilenet_v3_large(pretrained=True)
     
-    # Fine-tune thêm các lớp sâu hơn của EfficientNet và MobileNetV3
+    # Fine-tune EfficientNet and MobileNetV3
     for param in efficientnet.parameters():
-        param.requires_grad = False  # Đóng băng các lớp đầu tiên
-
-    # Fine-tune từ lớp 30 trở đi của EfficientNet
-    for param in efficientnet._blocks[30:].parameters():
-        param.requires_grad = True
-
-    # Fine-tune lớp fully-connected cuối cùng
-    for param in efficientnet._fc.parameters():
-        param.requires_grad = True
-
-    # Fine-tune từ các lớp middle trở đi của MobileNetV3
-    for param in mobilenet.features[12:].parameters():
-        param.requires_grad = True
-
-    # Fine-tune lớp classifier cuối cùng của MobileNetV3
-    for param in mobilenet.classifier.parameters():
-        param.requires_grad = True
-
+        param.requires_grad = True  # Mở khóa toàn bộ EfficientNet
+    
+    for param in mobilenet.parameters():
+        param.requires_grad = True  # Mở khóa toàn bộ MobileNetV3
 
     # Modify the final layers of both models to match the number of classes
     num_ftrs_efficient = efficientnet._fc.in_features
@@ -110,41 +173,75 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     efficientnet = efficientnet.to(device)
     mobilenet = mobilenet.to(device)
 
-    # Combined model that takes the outputs of both EfficientNet and MobileNetV3
-    class CombinedModel(nn.Module):
-        def __init__(self, efficientnet, mobilenet, num_classes):
-            super(CombinedModel, self).__init__()
-            self.efficientnet = efficientnet
-            self.mobilenet = mobilenet
-            self.fc = nn.Linear(512 * 2, num_classes)  # Concatenating outputs from both models
-
-        def forward(self, x):
-            out1 = self.efficientnet(x)
-            out2 = self.mobilenet(x)
-            combined_out = torch.cat((out1, out2), dim=1)  # Concatenating along the feature dimension
-            final_out = self.fc(combined_out)
-            return final_out
-
     # Initialize the combined model
     model = CombinedModel(efficientnet, mobilenet, num_classes=len(dataset.classes)).to(device)
 
     # Define the loss function and optimizer
-    criterion = nn.CrossEntropyLoss()
-    # Sử dụng tốc độ học khác nhau cho các phần của mô hình
-    optimizer = optim.AdamW([
-        {'params': efficientnet.module._blocks[30:].parameters(), 'lr': 1e-5} if isinstance(efficientnet, nn.DataParallel) else {'params': efficientnet._blocks[30:].parameters(), 'lr': 1e-5},  # Lớp giữa học chậm hơn
-        {'params': efficientnet.module._fc.parameters(), 'lr': 1e-3} if isinstance(efficientnet, nn.DataParallel) else {'params': efficientnet._fc.parameters(), 'lr': 1e-3},  # Lớp cuối học nhanh hơn
-        {'params': mobilenet.module.features[12:].parameters(), 'lr': 1e-5} if isinstance(mobilenet, nn.DataParallel) else {'params': mobilenet.features[12:].parameters(), 'lr': 1e-5},  # Lớp giữa của MobileNet học chậm hơn
-        {'params': mobilenet.module.classifier.parameters(), 'lr': 1e-3} if isinstance(mobilenet, nn.DataParallel) else {'params': mobilenet.classifier.parameters(), 'lr': 1e-3}  # Lớp cuối cùng của MobileNet học nhanh hơn
-    ])
-
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)  # Add label smoothing
     
-    # Điều chỉnh scheduler theo phương pháp giảm tốc độ học dựa trên mất mát
+    # Sử dụng Optimizer AdamW
+    optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+    
+    # Sử dụng scheduler ReduceLROnPlateau để giảm learning rate dựa trên validation loss
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
+    # Initialize Early Stopping
+    early_stopping = EarlyStopping(patience=10, verbose=True)
+    # Define the CutMix and MixUp techniques
+    use_cutmix = True
+    use_mixup = True
 
     # Training loop
-    def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+    # Define the cutmix_data function
+    def cutmix_data(inputs, labels, alpha=1.0):
+        lam = np.random.beta(alpha, alpha)
+        rand_index = torch.randperm(inputs.size()[0])
+        target_a = labels
+        target_b = labels[rand_index]
+        
+        # Select the bounding box region for CutMix
+        bbx1, bby1, bbx2, bby2 = rand_bbox(inputs.size(), lam)
+        inputs[:, :, bbx1:bbx2, bby1:bby2] = inputs[rand_index, :, bbx1:bbx2, bby1:bby2]
+        
+        # Adjust lambda based on area ratio
+        lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (inputs.size()[-1] * inputs.size()[-2]))
+        return inputs, target_a, target_b, lam
+
+    def rand_bbox(size, lam):
+        W = size[2]
+        H = size[3]
+        cut_rat = np.sqrt(1. - lam)
+        cut_w = int(W * cut_rat)
+        cut_h = int(H * cut_rat)
+
+        # Uniform
+        cx = np.random.randint(W)
+        cy = np.random.randint(H)
+
+        bbx1 = np.clip(cx - cut_w // 2, 0, W)
+        bby1 = np.clip(cy - cut_h // 2, 0, H)
+        bbx2 = np.clip(cx + cut_w // 2, 0, W)
+        bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+        return bbx1, bby1, bbx2, bby2
+
+    def mixup_data(inputs, labels, alpha=1.0):
+        if alpha > 0:
+            lam = np.random.beta(alpha, alpha)
+        else:
+            lam = 1
+        
+        rand_index = torch.randperm(inputs.size()[0])
+        mixed_inputs = lam * inputs + (1 - lam) * inputs[rand_index, :]
+        target_a, target_b = labels, labels[rand_index]
+        return mixed_inputs, target_a, target_b, lam
+
+
+# Training loop
+    def train_model(model, criterion, optimizer, scheduler, early_stopping, num_epochs=50, use_cutmix=True, use_mixup=True):
+        best_model_wts = copy.deepcopy(model.state_dict())
+        best_acc = 0.0
+
         for epoch in range(num_epochs):
             print(f'Epoch {epoch+1}/{num_epochs}')
             print('-' * 30)
@@ -167,6 +264,15 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
                     inputs = inputs.to(device)
                     labels = labels.to(device)
 
+                    # Apply CutMix or Mixup during training phase
+                    if phase == 'train':
+                        if use_cutmix:
+                            inputs, targets_a, targets_b, lam = cutmix_data(inputs, labels)
+                        elif use_mixup:
+                            inputs, targets_a, targets_b, lam = mixup_data(inputs, labels)
+
+                        inputs, targets_a, targets_b = inputs.to(device), targets_a.to(device), targets_b.to(device)
+
                     # Zero the parameter gradients
                     optimizer.zero_grad()
 
@@ -174,7 +280,12 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
                     with torch.set_grad_enabled(phase == 'train'):
                         outputs = model(inputs)
                         _, preds = torch.max(outputs, 1)
-                        loss = criterion(outputs, labels)
+                        
+                        # Calculate loss for CutMix or Mixup
+                        if phase == 'train' and (use_cutmix or use_mixup):
+                            loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
+                        else:
+                            loss = criterion(outputs, labels)
 
                         # Backward pass and optimize only if in training phase
                         if phase == 'train':
@@ -201,10 +312,24 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
                 print(f'  {phase.capitalize()} Phase:')
                 print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
 
-                # Step the scheduler if in the validation phase
+                # Deep copy the model
                 if phase == 'val':
                     scheduler.step(epoch_loss)
+                    early_stopping(epoch_loss, model)
+                    if epoch_acc > best_acc:
+                        best_acc = epoch_acc
+                        best_model_wts = copy.deepcopy(model.state_dict())
 
+            print()
+
+            if early_stopping.early_stop:
+                print("Early stopping triggered")
+                break
+
+        print(f'Best val Acc: {best_acc:.4f}')
+
+        # Load best model weights
+        model.load_state_dict(best_model_wts)
         return model
 
     # Evaluate the model
@@ -233,7 +358,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         return accuracy
 
     # Train the model
-    model = train_model(model, criterion, optimizer,scheduler, num_epochs=50)
+    model = train_model(model, criterion, optimizer, scheduler, early_stopping, num_epochs=50)
 
     # Save the trained model for the current fold
     torch.save(model.state_dict(), f'combined_model_fold_{fold + 1}.pth')

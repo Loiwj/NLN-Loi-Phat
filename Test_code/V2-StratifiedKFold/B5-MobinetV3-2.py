@@ -71,27 +71,6 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     # Load EfficientNet-B5 and MobileNetV3 models
     efficientnet = EfficientNet.from_pretrained('efficientnet-b5')
     mobilenet = models.mobilenet_v3_large(pretrained=True)
-    
-    # Fine-tune thêm các lớp sâu hơn của EfficientNet và MobileNetV3
-    for param in efficientnet.parameters():
-        param.requires_grad = False  # Đóng băng các lớp đầu tiên
-
-    # Fine-tune từ lớp 30 trở đi của EfficientNet
-    for param in efficientnet._blocks[30:].parameters():
-        param.requires_grad = True
-
-    # Fine-tune lớp fully-connected cuối cùng
-    for param in efficientnet._fc.parameters():
-        param.requires_grad = True
-
-    # Fine-tune từ các lớp middle trở đi của MobileNetV3
-    for param in mobilenet.features[12:].parameters():
-        param.requires_grad = True
-
-    # Fine-tune lớp classifier cuối cùng của MobileNetV3
-    for param in mobilenet.classifier.parameters():
-        param.requires_grad = True
-
 
     # Modify the final layers of both models to match the number of classes
     num_ftrs_efficient = efficientnet._fc.in_features
@@ -130,18 +109,9 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     # Define the loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    # Sử dụng tốc độ học khác nhau cho các phần của mô hình
-    optimizer = optim.AdamW([
-        {'params': efficientnet._blocks[30:].parameters(), 'lr': 1e-5},  # Lớp giữa học chậm hơn
-        {'params': efficientnet._fc.parameters(), 'lr': 1e-3},  # Lớp cuối học nhanh hơn
-        {'params': mobilenet.features[12:].parameters(), 'lr': 1e-5},  # Lớp giữa của MobileNet học chậm hơn
-        {'params': mobilenet.classifier.parameters(), 'lr': 1e-3}  # Lớp cuối cùng của MobileNet học nhanh hơn
-    ])
-
+    optimizer = optim.AdamW(model.parameters(), lr=0.001)  # Sử dụng AdamW thay vì Adam
     
-    # Điều chỉnh scheduler theo phương pháp giảm tốc độ học dựa trên mất mát
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
-
 
     # Training loop
     def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
