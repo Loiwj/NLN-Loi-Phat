@@ -26,8 +26,6 @@ data_transforms = {
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(30),
         transforms.Resize((128, 128)),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
-        transforms.RandomAffine(degrees=30, translate=(0.1, 0.1), shear=10),
         transforms.GaussianBlur(3),
         transforms.RandomVerticalFlip(),
         transforms.RandomErasing(p=0.5),
@@ -57,7 +55,7 @@ skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 # Early Stopping parameters
 class EarlyStopping:
-    def __init__(self, patience=10, verbose=False, delta=0):
+    def __init__(self, patience=5, verbose=False, delta=0):
         self.patience = patience
         self.verbose = verbose
         self.counter = 0
@@ -89,13 +87,19 @@ class CombinedModel(nn.Module):
         super(CombinedModel, self).__init__()
         self.efficientnet = efficientnet
         self.mobilenet = mobilenet
-        self.fc1 = nn.Linear(512 * 2, 1024)
-        self.bn1 = nn.BatchNorm1d(1024)
+        self.fc1 = nn.Linear(512 * 2, 4096)
+        self.bn1 = nn.BatchNorm1d(4096)
         self.dropout1 = nn.Dropout(0.3)
-        self.fc2 = nn.Linear(1024, 512)
-        self.bn2 = nn.BatchNorm1d(512)
+        self.fc2 = nn.Linear(4096, 2048)
+        self.bn2 = nn.BatchNorm1d(2048)
         self.dropout2 = nn.Dropout(0.3)
-        self.fc3 = nn.Linear(512, num_classes)  # Final output layer
+        self.fc3 = nn.Linear(2048, 1024)
+        self.bn3 = nn.BatchNorm1d(1024)
+        self.dropout3 = nn.Dropout(0.3)
+        self.fc4 = nn.Linear(1024, 512)
+        self.bn4 = nn.BatchNorm1d(512)
+        self.dropout4 = nn.Dropout(0.3)
+        self.fc5 = nn.Linear(512, num_classes)  # Final output layer
 
     def forward(self, x):
         out1 = self.efficientnet(x)
@@ -109,7 +113,15 @@ class CombinedModel(nn.Module):
         combined_out = self.bn2(combined_out)
         combined_out = torch.relu(combined_out)
         combined_out = self.dropout2(combined_out)
-        final_out = self.fc3(combined_out)
+        combined_out = self.fc3(combined_out)
+        combined_out = self.bn3(combined_out)
+        combined_out = torch.relu(combined_out)
+        combined_out = self.dropout3(combined_out)
+        combined_out = self.fc4(combined_out)
+        combined_out = self.bn4(combined_out)
+        combined_out = torch.relu(combined_out)
+        combined_out = self.dropout4(combined_out)
+        final_out = self.fc5(combined_out)
         return final_out
 
 # Get training and validation indices
@@ -131,48 +143,45 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     dataloaders = {'train': train_loader, 'val': val_loader}
     dataset_sizes = {'train': len(train_subset), 'val': len(val_subset)}
 
-    # Load EfficientNet-B5 and MobileNetV3 models
-    efficientnet = EfficientNet.from_pretrained('efficientnet-b5')
-    mobilenet = models.mobilenet_v3_large(pretrained=True)
-    
-    # Fine-tune EfficientNet and MobileNetV3
-    for param in efficientnet.parameters():
-        param.requires_grad = True  # Mở khóa toàn bộ EfficientNet
-    
-    for param in mobilenet.parameters():
-        param.requires_grad = True  # Mở khóa toàn bộ MobileNetV3
+    # Load EfficientNet-B5 and EfficientNet-B6 models
+    efficientnet_b5 = EfficientNet.from_pretrained('efficientnet-b5')
+    efficientnet_b6 = EfficientNet.from_pretrained('efficientnet-b6')
+
+    # Fine-tune EfficientNet-B5 and EfficientNet-B6
+    for param in efficientnet_b5.parameters():
+        param.requires_grad = True  # Unfreeze all layers in EfficientNet-B5
+
+    for param in efficientnet_b6.parameters():
+        param.requires_grad = True  # Unfreeze all layers in EfficientNet-B6
 
     # Modify the final layers of both models to match the number of classes
-    num_ftrs_efficient = efficientnet._fc.in_features
-    efficientnet._fc = nn.Linear(num_ftrs_efficient, 512)
+    num_ftrs_b5 = efficientnet_b5._fc.in_features
+    efficientnet_b5._fc = nn.Linear(num_ftrs_b5, 512)
 
-    num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
-    mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 512)
+    num_ftrs_b6 = efficientnet_b6._fc.in_features
+    efficientnet_b6._fc = nn.Linear(num_ftrs_b6, 512)
 
     # If more than 1 GPU is available, wrap the models in DataParallel
     if torch.cuda.device_count() > 1:
         print(f"Using {torch.cuda.device_count()} GPUs!")
-        efficientnet = nn.DataParallel(efficientnet)
-        mobilenet = nn.DataParallel(mobilenet)
+        efficientnet_b5 = nn.DataParallel(efficientnet_b5)
+        efficientnet_b6 = nn.DataParallel(efficientnet_b6)
 
     # Move the models to GPU(s)
-    efficientnet = efficientnet.to(device)
-    mobilenet = mobilenet.to(device)
+    efficientnet_b5 = efficientnet_b5.to(device)
+    efficientnet_b6 = efficientnet_b6.to(device)
 
     # Initialize the combined model
-    model = CombinedModel(efficientnet, mobilenet, num_classes=len(dataset.classes)).to(device)
+    model = CombinedModel(efficientnet_b5, efficientnet_b6, num_classes=len(dataset.classes)).to(device)
 
-    # Define the loss function and optimizer
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)  # Add label smoothing
-    
     # Sử dụng Optimizer AdamW
-    optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
     
     # Sử dụng scheduler ReduceLROnPlateau để giảm learning rate dựa trên validation loss
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
     # Initialize Early Stopping
-    early_stopping = EarlyStopping(patience=5, verbose=True)
+    early_stopping = EarlyStopping(patience=10, verbose=True)
     # Define the CutMix and MixUp techniques
     use_cutmix = True
     use_mixup = True
@@ -256,7 +265,6 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
                             inputs, targets_a, targets_b, lam = cutmix_data(inputs, labels)
                         elif use_mixup:
                             inputs, targets_a, targets_b, lam = mixup_data(inputs, labels)
-
                         inputs, targets_a, targets_b = inputs.to(device), targets_a.to(device), targets_b.to(device)
 
                     # Zero the parameter gradients
@@ -342,6 +350,9 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
         print(f'Accuracy of the model: {accuracy:.4f}')
 
         return accuracy
+
+    # Define the loss function (criterion)
+    criterion = nn.CrossEntropyLoss()
 
     # Train the model
     model = train_model(model, criterion, optimizer, scheduler, early_stopping, num_epochs=50)

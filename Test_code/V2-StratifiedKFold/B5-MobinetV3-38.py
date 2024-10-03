@@ -91,6 +91,7 @@ class CombinedModel(nn.Module):
         self.mobilenet = mobilenet
         self.fc1 = nn.Linear(512 * 2, 1024)
         self.bn1 = nn.BatchNorm1d(1024)
+        self.attention = nn.MultiheadAttention(embed_dim=1024, num_heads=8, dropout=0.3)
         self.dropout1 = nn.Dropout(0.3)
         self.fc2 = nn.Linear(1024, 512)
         self.bn2 = nn.BatchNorm1d(512)
@@ -104,6 +105,12 @@ class CombinedModel(nn.Module):
         combined_out = self.fc1(combined_out)
         combined_out = self.bn1(combined_out)
         combined_out = torch.relu(combined_out)
+        
+        # Attention layer
+        combined_out = combined_out.unsqueeze(0)  # Add sequence dimension for attention
+        combined_out, _ = self.attention(combined_out, combined_out, combined_out)
+        combined_out = combined_out.squeeze(0)  # Remove sequence dimension
+        
         combined_out = self.dropout1(combined_out)
         combined_out = self.fc2(combined_out)
         combined_out = self.bn2(combined_out)
