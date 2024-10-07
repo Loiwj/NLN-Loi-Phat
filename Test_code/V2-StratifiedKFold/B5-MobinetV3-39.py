@@ -23,14 +23,12 @@ print(f'Using device: {device}')
 data_transforms = {
     'train': transforms.Compose([
         transforms.Resize((224, 224)),  # Resize all images to 224x224
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(30),
-        transforms.RandomAffine(degrees=30, translate=(0.1, 0.1), shear=10),
-        transforms.RandomVerticalFlip(),
-        transforms.RandomErasing(p=0.5),
-        transforms.RandomPerspective(distortion_scale=0.5, p=0.5),
+        transforms.RandomHorizontalFlip(p=0.5),  # Lật ngẫu nhiên theo trục X với xác suất 50%
+        transforms.RandomVerticalFlip(p=0.5),    # Lật ngẫu nhiên theo trục Y với xác suất 50%
+        transforms.RandomRotation(degrees=45, expand=False, center=None),  # Xoay ngẫu nhiên quanh tâm ảnh
+        transforms.RandomCrop(128),  # Cắt ngẫu nhiên ảnh sau khi đã resize
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) 
     ]),
     'val': transforms.Compose([
         transforms.Resize((224, 224)),  # Resize all images to 224x224
