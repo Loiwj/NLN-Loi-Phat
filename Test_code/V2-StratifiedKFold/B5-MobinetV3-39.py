@@ -23,12 +23,14 @@ print(f'Using device: {device}')
 data_transforms = {
     'train': transforms.Compose([
         transforms.Resize((224, 224)),  # Resize all images to 224x224
-        transforms.RandomHorizontalFlip(p=0.5),  # Lật ngẫu nhiên theo trục X với xác suất 50%
-        transforms.RandomVerticalFlip(p=0.5),    # Lật ngẫu nhiên theo trục Y với xác suất 50%
-        transforms.RandomRotation(degrees=45, expand=False, center=None),  # Xoay ngẫu nhiên quanh tâm ảnh
-        transforms.RandomCrop(128),  # Cắt ngẫu nhiên ảnh sau khi đã resize
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(30),
+        transforms.RandomAffine(degrees=30, translate=(0.1, 0.1), shear=10),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomErasing(p=0.5),
+        transforms.RandomPerspective(distortion_scale=0.5, p=0.5),
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) 
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
     'val': transforms.Compose([
         transforms.Resize((224, 224)),  # Resize all images to 224x224
@@ -110,6 +112,26 @@ class CombinedModel(nn.Module):
         final_out = self.fc3(combined_out)
         return final_out
 
+# Define Focal Loss
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=1, gamma=2, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        ce_loss = nn.CrossEntropyLoss(reduction='none')(inputs, targets)
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
 # Get training and validation indices
 for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), targets)):
     print(f'Fold {fold + 1}')
@@ -161,7 +183,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     model = CombinedModel(efficientnet, mobilenet, num_classes=len(dataset.classes)).to(device)
 
     # Define the loss function and optimizer
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)  # Add label smoothing
+    criterion = FocalLoss(alpha=1, gamma=2)  # Use Focal Loss
     
     # Sử dụng Optimizer AdamW
     optimizer = optim.AdamW(model.parameters(), lr=0.0001111111, weight_decay=1e-4)
@@ -170,7 +192,7 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
     # Initialize Early Stopping
-    early_stopping = EarlyStopping(patience=5, verbose=True)
+    early_stopping = EarlyStopping(patience=10, verbose=True)
     # Define the CutMix and MixUp techniques
     use_cutmix = True
     use_mixup = True
@@ -349,3 +371,64 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), ta
 
     # Evaluate accuracy on the validation set
     evaluate_model(model, val_loader)
+    
+    # Define num_classes
+    num_classes = len(dataset.classes)
+    
+    # Import necessary modules
+    import torch
+    from torch.utils.data import DataLoader
+    
+    # Giả sử bạn đã lưu các mô hình với tên 'combined_model_fold_{fold}.pth'
+    model_paths = [f'combined_model_fold_{i}.pth' for i in range(1, 6)]
+    models = []
+    
+    # Load tất cả các mô hình
+    for path in model_paths:
+        model = CombinedModel(efficientnet, mobilenet, num_classes)
+        model.load_state_dict(torch.load(path))
+        model = model.to(device)  # Move model to the same device
+        model.eval()
+        models.append(model)
+    
+    # Sử dụng ensemble để dự đoán
+    def ensemble_predict(models, dataloader):
+        predictions = []
+        with torch.no_grad():
+            for inputs, _ in dataloader:
+                inputs = inputs.to(device)
+                outputs = [model(inputs) for model in models]
+                avg_outputs = torch.mean(torch.stack(outputs), dim=0)
+                _, preds = torch.max(avg_outputs, 1)
+                predictions.extend(preds.cpu().numpy())
+        return predictions
+    
+    # Define test_dataset
+    test_dataset = datasets.ImageFolder(root=image_dir, transform=data_transforms['val'])
+    
+    # Giả sử 'test_loader' là DataLoader cho tập dữ liệu kiểm tra
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4)
+    ensemble_predictions = ensemble_predict(models, test_loader)
+
+    # Path to your second dataset
+    image_dir2 = '/kaggle/working/NLN-Loi-Phat/Dataset_2/'  # Update this path
+
+    # Load second dataset
+    test_dataset2 = datasets.ImageFolder(root=image_dir2, transform=data_transforms['val'])
+
+    # Create DataLoader for the second dataset
+    test_loader2 = DataLoader(test_dataset2, batch_size=64, shuffle=False, num_workers=4)
+
+    # Evaluate the ensemble model on the second dataset
+    ensemble_predictions2 = ensemble_predict(models, test_loader2)
+
+    # Calculate accuracy on the second dataset
+    corrects = 0
+    total_samples = len(test_dataset2)
+    
+    for i, (_, labels) in enumerate(test_loader2):
+        labels = labels.to(device)
+        corrects += torch.sum(torch.tensor(ensemble_predictions2[i*64:(i+1)*64]).to(device) == labels)
+    
+    accuracy2 = corrects.double() / total_samples
+    print(f'Accuracy on the second dataset: {accuracy2:.4f}')
