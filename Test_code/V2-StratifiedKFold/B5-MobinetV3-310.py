@@ -97,47 +97,29 @@ class CombinedModel(nn.Module):
         self.mobilenet = mobilenet
         self.fc1 = nn.Linear(512 * 2, 1024)
         self.bn1 = nn.BatchNorm1d(1024)
-        self.attention1 = nn.MultiheadAttention(embed_dim=1024, num_heads=8, dropout=0.2)
+        self.attention = nn.MultiheadAttention(embed_dim=1024, num_heads=8, dropout=0.2)
         self.dropout1 = nn.Dropout(0.2)
         self.fc2 = nn.Linear(1024, 512)
         self.bn2 = nn.BatchNorm1d(512)
-        self.attention2 = nn.MultiheadAttention(embed_dim=512, num_heads=8, dropout=0.2)
         self.dropout2 = nn.Dropout(0.2)
-        self.fc3 = nn.Linear(512, num_classes)
-        self.fc4 = nn.Linear(512, 256)
-        self.bn3 = nn.BatchNorm1d(256)
-        self.dropout3 = nn.Dropout(0.2)
-        self.fc5 = nn.Linear(256, 128)
-        self.bn4 = nn.BatchNorm1d(128)
-        self.dropout4 = nn.Dropout(0.2)
-        self.fc6 = nn.Linear(128, num_classes)
+        self.fc3 = nn.Linear(512, num_classes)  # Final output layer
 
     def forward(self, x):
         out1 = self.efficientnet(x)
         out2 = self.mobilenet(x)
-        combined_out = torch.cat((out1, out2), dim=1).contiguous()
+        combined_out = torch.cat((out1, out2), dim=1).contiguous()  # Ensure tensor is contiguous
         combined_out = self.fc1(combined_out)
         combined_out = self.bn1(combined_out)
         combined_out = torch.relu(combined_out)
-        combined_out = combined_out.unsqueeze(0)
-        combined_out, _ = self.attention1(combined_out, combined_out, combined_out)
-        combined_out = combined_out.unsqueeze(0)
+        combined_out = combined_out.unsqueeze(0)  # Add sequence dimension for attention
+        combined_out, _ = self.attention(combined_out, combined_out, combined_out)
+        combined_out = combined_out.squeeze(0)  # Remove sequence dimension
         combined_out = self.dropout1(combined_out)
         combined_out = self.fc2(combined_out)
         combined_out = self.bn2(combined_out)
         combined_out = torch.relu(combined_out)
-        combined_out = combined_out.unsqueeze(0)
-        combined_out, _ = self.attention2(combined_out, combined_out, combined_out)
-        combined_out = combined_out.unsqueeze(0)
-        combined_out = self.fc4(combined_out)
-        combined_out = self.bn3(combined_out)
-        combined_out = torch.relu(combined_out)
-        combined_out = self.dropout3(combined_out)
-        combined_out = self.fc5(combined_out)
-        combined_out = self.bn4(combined_out)
-        combined_out = torch.relu(combined_out)
-        combined_out = self.dropout4(combined_out)
-        final_out = self.fc6(combined_out)
+        combined_out = self.dropout2(combined_out)
+        final_out = self.fc3(combined_out)
         return final_out
 
 

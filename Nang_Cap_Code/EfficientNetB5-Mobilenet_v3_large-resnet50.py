@@ -291,7 +291,7 @@ optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.0001)
 scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1, eta_min=1e-12)
 
 # Initialize EarlyStopping
-early_stopping = EarlyStopping(patience=15, verbose=True)
+early_stopping = EarlyStopping(patience=50, verbose=True)
 
 scaler = GradScaler()
 

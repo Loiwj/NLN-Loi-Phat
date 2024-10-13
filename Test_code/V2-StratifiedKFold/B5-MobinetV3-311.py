@@ -8,8 +8,8 @@ import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
 import warnings
 import copy
-from torch.cuda.amp import GradScaler, autocast
 from torch.optim.swa_utils import AveragedModel, SWALR
+from torch.cuda.amp import GradScaler, autocast
 
 # Vô hiệu hóa cảnh báo FutureWarning, UserWarning, DeprecationWarning
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -55,17 +55,14 @@ val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=4
 dataloaders = {'train': train_loader, 'val': val_loader}
 dataset_sizes = {'train': len(train_dataset), 'val': len(val_dataset)}
 
-# Load EfficientNet-B5, MobileNetV3 và ResNet50
+# Load EfficientNet-B5 và MobileNetV3
 efficientnet = EfficientNet.from_pretrained('efficientnet-b5')
 mobilenet = models.mobilenet_v3_large(pretrained=True)
-resnet50 = models.resnet50(pretrained=True)
 
-# Fine-tune cả ba mô hình
+# Fine-tune cả hai mô hình
 for param in efficientnet.parameters():
     param.requires_grad = True
 for param in mobilenet.parameters():
-    param.requires_grad = True
-for param in resnet50.parameters():
     param.requires_grad = True
 
 # Chỉnh sửa lớp đầu ra cuối cùng
@@ -75,17 +72,13 @@ efficientnet._fc = nn.Linear(num_ftrs_efficient, 512)
 num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
 mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 512)
 
-num_ftrs_resnet = resnet50.fc.in_features
-resnet50.fc = nn.Linear(num_ftrs_resnet, 512)
-
 # Mô hình kết hợp
 class CombinedModel(nn.Module):
-    def __init__(self, efficientnet, mobilenet, resnet50, num_classes):
+    def __init__(self, efficientnet, mobilenet, num_classes):
         super(CombinedModel, self).__init__()
         self.efficientnet = efficientnet
         self.mobilenet = mobilenet
-        self.resnet50 = resnet50
-        self.fc1 = nn.Linear(512 * 3, 1024)
+        self.fc1 = nn.Linear(512 * 2, 1024)
         self.bn1 = nn.BatchNorm1d(1024)
         self.fc2 = nn.Linear(1024, 512)
         self.bn2 = nn.BatchNorm1d(512)
@@ -94,14 +87,13 @@ class CombinedModel(nn.Module):
     def forward(self, x):
         out1 = self.efficientnet(x)
         out2 = self.mobilenet(x)
-        out3 = self.resnet50(x)
-        combined_out = torch.cat((out1, out2, out3), dim=1)
+        combined_out = torch.cat((out1, out2), dim=1)
         combined_out = torch.relu(self.bn1(self.fc1(combined_out)))
         combined_out = torch.relu(self.bn2(self.fc2(combined_out)))
         final_out = self.fc3(combined_out)
         return final_out
 
-# Label Smoothing CrossEntropy
+# Thêm Label Smoothing CrossEntropy
 class LabelSmoothingCrossEntropy(nn.Module):
     def __init__(self, smoothing=0.1):
         super(LabelSmoothingCrossEntropy, self).__init__()
@@ -190,10 +182,16 @@ class EarlyStopping:
         self.best_model_wts = copy.deepcopy(model.state_dict())
         self.val_loss_min = val_loss
 
-# Hàm huấn luyện
-def train_model(model, criterion, optimizer, scheduler, early_stopping, num_epochs=200, use_cutmix=True, use_mixup=True, gradient_accumulation_steps=4):
+scaler = GradScaler()
+
+# Thêm tham số gradient_accumulation_steps vào hàm huấn luyện
+def train_model(model, criterion, optimizer, scheduler, early_stopping, num_epochs=200, use_cutmix=True, use_mixup=True, gradient_accumulation_steps=4, swa_start=150):
     best_model_wts = copy.deepcopy(model.state_dict())
     best_acc = 0.0
+
+    # Initialize SWA
+    swa_model = AveragedModel(model)
+    swa_scheduler = SWALR(optimizer, swa_lr=0.05)
 
     for epoch in range(num_epochs):
         print(f'Epoch {epoch+1}/{num_epochs}')
@@ -259,7 +257,11 @@ def train_model(model, criterion, optimizer, scheduler, early_stopping, num_epoc
             print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
 
             if phase == 'val':
-                scheduler.step(epoch_loss)
+                if epoch > swa_start:
+                    swa_model.update_parameters(model)
+                    swa_scheduler.step()
+                else:
+                    scheduler.step(epoch_loss)
                 early_stopping(epoch_loss, model)
                 if early_stopping.early_stop:
                     print("Early stopping")
@@ -273,39 +275,29 @@ def train_model(model, criterion, optimizer, scheduler, early_stopping, num_epoc
 
     print(f'Best val Acc: {best_acc:.4f}')
     model.load_state_dict(best_model_wts)
+
+    # Update BN statistics for the SWA model at the end of training
+    torch.optim.swa_utils.update_bn(train_loader, swa_model)
+
     return model
 
-# Khởi tạo mô hình kết hợp
-model = CombinedModel(efficientnet, mobilenet, resnet50, num_classes=len(dataset.classes)).to(device)
-
+model = CombinedModel(efficientnet, mobilenet, num_classes=len(dataset.classes)).to(device)
 # Sử dụng DataParallel để sử dụng nhiều GPU
 if torch.cuda.device_count() > 1:
     print(f"Using {torch.cuda.device_count()} GPUs!")
     model = nn.DataParallel(model)
-    
+
 # Định nghĩa loss function và optimizer
 criterion = LabelSmoothingCrossEntropy(smoothing=0.1)
+
 optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.0001)
+# Initialize EarlyStopping
+early_stopping = EarlyStopping(patience=10, verbose=True)
 
 # Cosine Annealing Scheduler với Warmup
 scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1, eta_min=1e-12)
-
-# Initialize EarlyStopping
-early_stopping = EarlyStopping(patience=15, verbose=True)
-
-scaler = GradScaler()
-
-# Initialize SWA
-swa_model = AveragedModel(model)
-swa_scheduler = SWALR(optimizer, swa_lr=0.05)
-swa_start = 150  # Example epoch to start SWA
-
 # Huấn luyện mô hình
 model = train_model(model, criterion, optimizer, scheduler, early_stopping, num_epochs=200)
-
-# Update BN statistics for the SWA model at the end of training
-torch.optim.swa_utils.update_bn(train_loader, swa_model)
-
 # Đánh giá mô hình
 def evaluate_model(model, dataloader):
     model.eval()
