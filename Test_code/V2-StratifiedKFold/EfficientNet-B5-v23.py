@@ -1,209 +1,306 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, Subset
-from efficientnet_pytorch import EfficientNet
-from sklearn.model_selection import StratifiedKFold
+from torchvision import models, datasets, transforms
+from torch.utils.data import DataLoader, random_split
+import timm
 import numpy as np
 from sklearn.metrics import precision_score, recall_score, f1_score
 import warnings
+import copy
+from torch.cuda.amp import GradScaler, autocast
+from torch.optim.swa_utils import AveragedModel, SWALR
+import os
+from PIL import Image
 
-# Vô hiệu hóa cảnh báo FutureWarning
+# Vô hiệu hóa cảnh báo FutureWarning, UserWarning, DeprecationWarning
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# Check if multiple GPUs are available
+# Kiểm tra GPU
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print(f'Using device: {device}')
 
-# Define transformations for the dataset
+# Định nghĩa phép biến đổi cho tập dữ liệu
 data_transforms = {
     'train': transforms.Compose([
-        transforms.RandomResizedCrop(224),
+        transforms.Resize((224, 224)),
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(30),
-        transforms.Resize((128, 128)),
+        transforms.RandomAffine(degrees=30, translate=(0.1, 0.1), shear=10),
+        transforms.RandomErasing(p=0.5),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
     'val': transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
 }
 
-# Path to your dataset
-image_dir = '/kaggle/working/NLN-Loi-Phat/Dataset_1/'  # Update this path
+# Đường dẫn đến tập dữ liệu của bạn
+image_dir = 'segmented_images/'  # Use the directory with segmented images
 
-# Load dataset
+# Tải tập dữ liệu
 dataset = datasets.ImageFolder(root=image_dir, transform=data_transforms['train'])
+train_size = int(0.8 * len(dataset))
+val_size = len(dataset) - train_size
 
-# Get class indices and targets
-targets = dataset.targets
+train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+train_dataset.dataset.transform = data_transforms['train']
+val_dataset.dataset.transform = data_transforms['val']
 
-# Set up Stratified K-Fold
-skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
+val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=4)
 
-# Get training and validation indices
-for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(targets)), targets)):
-    print(f'Fold {fold + 1}')
+dataloaders = {'train': train_loader, 'val': val_loader}
+dataset_sizes = {'train': len(train_dataset), 'val': len(val_dataset)}
 
-    # Create training and validation subsets
-    train_subset = Subset(dataset, train_idx)
-    val_subset = Subset(dataset, val_idx)
+# Load EfficientNet-B5, MobileNetV3 và ResNet50
+efficientnet = timm.create_model('efficientnet_b5', pretrained=True)
+mobilenet = models.mobilenet_v3_large(pretrained=True)
+resnet50 = models.resnet50(pretrained=True)
 
-    # Apply appropriate transformations to each subset
-    train_subset.dataset.transform = data_transforms['train']
-    val_subset.dataset.transform = data_transforms['val']
+# Fine-tune cả ba mô hình
+for param in efficientnet.parameters():
+    param.requires_grad = True
+for param in mobilenet.parameters():
+    param.requires_grad = True
+for param in resnet50.parameters():
+    param.requires_grad = True
 
-    # Create DataLoader for training and validation
-    train_loader = DataLoader(train_subset, batch_size=16, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_subset, batch_size=16, shuffle=False, num_workers=4)
+# Chỉnh sửa lớp đầu ra cuối cùng
+num_ftrs_efficient = efficientnet.classifier.in_features
+efficientnet.classifier = nn.Linear(num_ftrs_efficient, 512)
 
-    dataloaders = {'train': train_loader, 'val': val_loader}
-    dataset_sizes = {'train': len(train_subset), 'val': len(val_subset)}
+num_ftrs_mobilenet = mobilenet.classifier[-1].in_features
+mobilenet.classifier[-1] = nn.Linear(num_ftrs_mobilenet, 512)
 
-    # Define your model, loss, and optimizer (EfficientNet-B5 in this case)
-    model = EfficientNet.from_pretrained('efficientnet-b5')
+num_ftrs_resnet = resnet50.fc.in_features
+resnet50.fc = nn.Linear(num_ftrs_resnet, 512)
 
-    # Modify the final layer to match the number of classes in your dataset
-    num_ftrs = model._fc.in_features
-    model._fc = nn.Linear(num_ftrs, len(dataset.classes))
-    # Add more layers to the model to increase accuracy
-    model._fc = nn.Sequential(
-        nn.Linear(num_ftrs, 2048),
-        nn.ReLU(),
-        nn.Dropout(0.3),
-        nn.Linear(2048, 1024),
-        nn.ReLU(),
-        nn.Dropout(0.3),
-        nn.Linear(1024, 512),
-        nn.ReLU(),
-        nn.Dropout(0.3),
-        nn.Linear(512, 256),
-        nn.ReLU(),
-        nn.Dropout(0.3),
-        nn.Linear(256, 128),
-        nn.ReLU(),
-        nn.Dropout(0.3),
-        nn.Linear(128, 64),
-        nn.ReLU(),
-        nn.Dropout(0.3),
-        nn.Linear(64, len(dataset.classes))
-    )
+# Mô hình kết hợp
+class CombinedModel(nn.Module):
+    def __init__(self, efficientnet, mobilenet, resnet50, num_classes):
+        super(CombinedModel, self).__init__()
+        self.efficientnet = efficientnet
+        self.mobilenet = mobilenet
+        self.resnet50 = resnet50
+        self.fc1 = nn.Linear(512 * 3, 1024)
+        self.bn1 = nn.BatchNorm1d(1024)
+        self.dropout1 = nn.Dropout(0.2)
+        self.fc2 = nn.Linear(1024, 512)
+        self.bn2 = nn.BatchNorm1d(512)
+        self.dropout2 = nn.Dropout(0.2)
+        self.fc3 = nn.Linear(512, 256)
+        self.bn3 = nn.BatchNorm1d(256)
+        self.dropout3 = nn.Dropout(0.2)
+        self.fc4 = nn.Linear(256, 128)
+        self.bn4 = nn.BatchNorm1d(128)
+        self.dropout4 = nn.Dropout(0.2)
+        self.fc5 = nn.Linear(128, num_classes)
+        self.attention = nn.MultiheadAttention(embed_dim=512 * 3, num_heads=8)
 
-    # If more than 1 GPU is available, wrap the model in DataParallel
-    if torch.cuda.device_count() > 1:
-        print(f"Using {torch.cuda.device_count()} GPUs!")
-        model = nn.DataParallel(model)
+    def forward(self, x):
+        # Use the segmented output as input to the combined model
+        out1 = self.efficientnet(x)
+        out2 = self.mobilenet(x)
+        out3 = self.resnet50(x)
+        combined_out = torch.cat((out1, out2, out3), dim=1)
+        combined_out = combined_out.unsqueeze(0)  # Add sequence dimension
+        combined_out, _ = self.attention(combined_out, combined_out, combined_out)
+        combined_out = combined_out.squeeze(0)  # Remove sequence dimension
+        combined_out = torch.relu(self.bn1(self.fc1(combined_out)))
+        combined_out = self.dropout1(combined_out)
+        combined_out = torch.relu(self.bn2(self.fc2(combined_out)))
+        combined_out = self.dropout2(combined_out)
+        combined_out = torch.relu(self.bn3(self.fc3(combined_out)))
+        combined_out = self.dropout3(combined_out)
+        combined_out = torch.relu(self.bn4(self.fc4(combined_out)))
+        combined_out = self.dropout4(combined_out)
+        final_out = self.fc5(combined_out)
+        return final_out
 
-    # Move the model to GPU(s)
-    model = model.to(device)
+# Label Smoothing CrossEntropy
+class LabelSmoothingCrossEntropy(nn.Module):
+    def __init__(self, smoothing=0.1):
+        super(LabelSmoothingCrossEntropy, self).__init__()
+        self.smoothing = smoothing
 
-    # Define the loss function and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    def forward(self, inputs, targets):
+        log_probs = torch.nn.functional.log_softmax(inputs, dim=-1)
+        targets = torch.zeros_like(log_probs).scatter_(1, targets.unsqueeze(1), 1)
+        targets = (1 - self.smoothing) * targets + self.smoothing / targets.size(1)
+        loss = (-targets * log_probs).mean(0).sum()
+        return loss
 
-    # Add a learning rate scheduler
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+# CutMix function
+def cutmix_data(x, y, alpha=1.0):
+    lam = np.random.beta(alpha, alpha)
+    rand_index = torch.randperm(x.size()[0]).to(device)
+    target_a = y
+    target_b = y[rand_index]
+    bbx1, bby1, bbx2, bby2 = rand_bbox(x.size(), lam)
+    x[:, :, bbx1:bbx2, bby1:bby2] = x[rand_index, :, bbx1:bbx2, bby1:bby2]
+    return x, target_a, target_b, lam
 
-    # Training loop
-    def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
-        for epoch in range(num_epochs):
-            print(f'Epoch {epoch+1}/{num_epochs}')
-            print('-' * 30)
-            
-            # Each epoch has a training and validation phase
-            for phase in ['train', 'val']:
-                if phase == 'train':
-                    model.train()  # Set model to training mode
-                else:
-                    model.eval()   # Set model to evaluate mode
+# Random bounding box
+def rand_bbox(size, lam):
+    W = size[2]
+    H = size[3]
+    cut_rat = np.sqrt(1. - lam)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+    return bbx1, bby1, bbx2, bby2
 
-                running_loss = 0.0
-                running_corrects = 0
+# Mixup function
+def mixup_data(x, y, alpha=1.0):
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+    batch_size = x.size()[0]
+    index = torch.randperm(batch_size).to(device)
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
 
-                all_preds = []
-                all_labels = []
+# Gradient Clipping
+def clip_gradient(max_norm=2.0):
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
 
-                # Iterate over data
-                for inputs, labels in dataloaders[phase]:
-                    inputs = inputs.to(device)
-                    labels = labels.to(device)
+# Early Stopping Class
+class EarlyStopping:
+    def __init__(self, patience=7, verbose=False):
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.val_loss_min = np.Inf
+        self.best_model_wts = None
 
-                    # Zero the parameter gradients
-                    optimizer.zero_grad()
+    def __call__(self, val_loss, model):
+        score = -val_loss
 
-                    # Forward pass
-                    with torch.set_grad_enabled(phase == 'train'):
-                        outputs = model(inputs)
-                        _, preds = torch.max(outputs, 1)
-                        loss = criterion(outputs, labels)
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(val_loss, model)
+        elif score < self.best_score:
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.save_checkpoint(val_loss, model)
+            self.counter = 0
 
-                        # Backward pass and optimize only if in training phase
-                        if phase == 'train':
-                            loss.backward()
-                            optimizer.step()
+    def save_checkpoint(self, val_loss, model):
+        '''Saves model when validation loss decrease.'''
+        if self.verbose:
+            print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
+        self.best_model_wts = copy.deepcopy(model.state_dict())
+        self.val_loss_min = val_loss
 
-                    # Statistics
-                    running_loss += loss.item() * inputs.size(0)
-                    running_corrects += torch.sum(preds == labels.data)
+# Hàm huấn luyện
+def train_model(model, criterion, optimizer, scheduler, early_stopping, num_epochs=200, use_cutmix=True, use_mixup=True, gradient_accumulation_steps=4):
+    best_model_wts = copy.deepcopy(model.state_dict())
+    best_acc = 0.0
 
-                    # Collect all predictions and labels for calculating metrics
-                    all_preds.extend(preds.cpu().numpy())
-                    all_labels.extend(labels.cpu().numpy())
+    for epoch in range(num_epochs):
+        print(f'Epoch {epoch+1}/{num_epochs}')
+        print('-' * 30)
+        
+        for phase in ['train', 'val']:
+            if phase == 'train':
+                model.train()
+            else:
+                model.eval()
 
-                # Calculate loss and accuracy for this phase
-                epoch_loss = running_loss / dataset_sizes[phase]
-                epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            running_loss = 0.0
+            running_corrects = 0
+            all_preds = []
+            all_labels = []
 
-                precision = precision_score(all_labels, all_preds, average='weighted')
-                recall = recall_score(all_labels, all_preds, average='weighted')
-                f1 = f1_score(all_labels, all_preds, average='weighted')
+            optimizer.zero_grad()
 
-                # Print the metrics for each phase
-                print(f'  {phase.capitalize()} Phase:')
-                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f}')
-                print(f'    Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
-
-                # Step the scheduler only during the training phase
-                if phase == 'train':
-                    scheduler.step()
-
-        return model
-
-    # Evaluate the model
-    def evaluate_model(model, dataloader):
-        model.eval()  # Đặt mô hình vào chế độ đánh giá (evaluation mode)
-        running_corrects = 0
-        total_samples = 0
-
-        with torch.no_grad():  # Tắt gradient để giảm bớt việc tính toán không cần thiết
-            for inputs, labels in dataloader:
+            for i, (inputs, labels) in enumerate(dataloaders[phase]):
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
-                # Forward pass: Dự đoán kết quả
-                outputs = model(inputs)
+                if phase == 'train':
+                    if use_cutmix:
+                        inputs, targets_a, targets_b, lam = cutmix_data(inputs, labels)
+                    elif use_mixup:
+                        inputs, targets_a, targets_b, lam = mixup_data(inputs, labels)
+
+                    inputs, targets_a,
+                    targets_b = targets_a.to(device), targets_b.to(device)
+
+                with autocast():
+                    outputs = model(inputs)
+                    if phase == 'train' and (use_cutmix or use_mixup):
+                        loss = criterion(outputs, targets_a) * lam + criterion(outputs, targets_b) * (1. - lam)
+                    else:
+                        loss = criterion(outputs, labels)
+
+                if phase == 'train':
+                    loss = loss / gradient_accumulation_steps
+                    scaler.scale(loss).backward()
+
+                    if (i + 1) % gradient_accumulation_steps == 0:
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad()
+
+                running_loss += loss.item() * inputs.size(0)
                 _, preds = torch.max(outputs, 1)
-
-                # Thống kê số lượng dự đoán đúng
                 running_corrects += torch.sum(preds == labels.data)
-                total_samples += labels.size(0)
+                all_preds.extend(preds.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
 
-        # Tính toán độ chính xác
-        accuracy = running_corrects.double() / total_samples
-        print(f'Accuracy of the model: {accuracy:.4f}')
+            if phase == 'train':
+                scheduler.step()
 
-        return accuracy
+            epoch_loss = running_loss / dataset_sizes[phase]
+            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            epoch_precision = precision_score(all_labels, all_preds, average='weighted')
+            epoch_recall = recall_score(all_labels, all_preds, average='weighted')
+            epoch_f1 = f1_score(all_labels, all_preds, average='weighted')
 
-    # Train the model
-    model = train_model(model, criterion, optimizer, scheduler, num_epochs=40)
+            print(f'{phase} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f} Precision: {epoch_precision:.4f} Recall: {epoch_recall:.4f} F1: {epoch_f1:.4f}')
 
-    # Save the trained model for the current fold
-    torch.save(model.state_dict(), f'efficientnet_b5_fold_{fold + 1}.pth')
+            if phase == 'val' and epoch_acc > best_acc:
+                best_acc = epoch_acc
+                best_model_wts = copy.deepcopy(model.state_dict())
 
-    # Evaluate accuracy on the validation set
-    evaluate_model(model, val_loader)
+            if phase == 'val':
+                early_stopping(epoch_loss, model)
+                if early_stopping.early_stop:
+                    print("Early stopping")
+                    model.load_state_dict(early_stopping.best_model_wts)
+                    return model
+
+    print(f'Best val Acc: {best_acc:4f}')
+    model.load_state_dict(best_model_wts)
+    return model
+
+# Initialize and train the model
+num_classes = len(dataset.classes)
+model = CombinedModel(efficientnet, mobilenet, resnet50, num_classes).to(device)
+criterion = LabelSmoothingCrossEntropy()
+optimizer = optim.AdamW(model.parameters(), lr=1e-4)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+early_stopping = EarlyStopping(patience=10, verbose=True)
+scaler = GradScaler()
+
+trained_model = train_model(model, criterion, optimizer, scheduler, early_stopping, num_epochs=200)

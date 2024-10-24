@@ -87,18 +87,36 @@ class CombinedModel(nn.Module):
         self.resnet50 = resnet50
         self.fc1 = nn.Linear(512 * 3, 1024)
         self.bn1 = nn.BatchNorm1d(1024)
+        self.dropout1 = nn.Dropout(0.2)
         self.fc2 = nn.Linear(1024, 512)
         self.bn2 = nn.BatchNorm1d(512)
-        self.fc3 = nn.Linear(512, num_classes)
+        self.dropout2 = nn.Dropout(0.2)
+        self.fc3 = nn.Linear(512, 256)
+        self.bn3 = nn.BatchNorm1d(256)
+        self.dropout3 = nn.Dropout(0.2)
+        self.fc4 = nn.Linear(256, 128)
+        self.bn4 = nn.BatchNorm1d(128)
+        self.dropout4 = nn.Dropout(0.2)
+        self.fc5 = nn.Linear(128, num_classes)
+        
+        self.attention = nn.MultiheadAttention(embed_dim=512 * 3, num_heads=8)
     
     def forward(self, x):
         out1 = self.efficientnet(x)
         out2 = self.mobilenet(x)
         out3 = self.resnet50(x)
         combined_out = torch.cat((out1, out2, out3), dim=1)
+        combined_out = combined_out.unsqueeze(0)  # Add sequence dimension
+        combined_out, _ = self.attention(combined_out, combined_out, combined_out)
+        combined_out = combined_out.squeeze(0)  # Remove sequence dimension
         combined_out = torch.relu(self.bn1(self.fc1(combined_out)))
+        combined_out = self.dropout1(combined_out)
         combined_out = torch.relu(self.bn2(self.fc2(combined_out)))
-        final_out = self.fc3(combined_out)
+        combined_out = self.dropout2(combined_out)
+        combined_out = torch.relu(self.bn3(self.fc3(combined_out)))
+        combined_out = self.dropout3(combined_out)
+        combined_out = torch.relu(self.bn4(self.fc4(combined_out)))
+        final_out = self.fc5(combined_out)  
         return final_out
 
 # Label Smoothing CrossEntropy
@@ -195,85 +213,94 @@ def train_model(model, criterion, optimizer, scheduler, early_stopping, num_epoc
     best_model_wts = copy.deepcopy(model.state_dict())
     best_acc = 0.0
 
-    for epoch in range(num_epochs):
-        print(f'Epoch {epoch+1}/{num_epochs}')
-        print('-' * 30)
-        
-        for phase in ['train', 'val']:
-            if phase == 'train':
-                model.train()
-            else:
-                model.eval()
-
-            running_loss = 0.0
-            running_corrects = 0
-            all_preds = []
-            all_labels = []
-
-            optimizer.zero_grad()
-
-            for i, (inputs, labels) in enumerate(dataloaders[phase]):
-                inputs = inputs.to(device)
-                labels = labels.to(device)
-
+    # Open a file to log the training process
+    with open('training_log.txt', 'w') as log_file:
+        for epoch in range(num_epochs):
+            log_file.write(f'Epoch {epoch+1}/{num_epochs}\n')
+            log_file.write('-' * 30 + '\n')
+            print(f'Epoch {epoch+1}/{num_epochs}')
+            print('-' * 30)
+            
+            for phase in ['train', 'val']:
                 if phase == 'train':
-                    if use_cutmix:
-                        inputs, targets_a, targets_b, lam = cutmix_data(inputs, labels)
-                    elif use_mixup:
-                        inputs, targets_a, targets_b, lam = mixup_data(inputs, labels)
+                    model.train()
+                else:
+                    model.eval()
 
-                    inputs, targets_a, targets_b = inputs.to(device), targets_a.to(device), targets_b.to(device)
+                running_loss = 0.0
+                running_corrects = 0
+                all_preds = []
+                all_labels = []
 
-                with torch.set_grad_enabled(phase == 'train'):
-                    with autocast():
-                        outputs = model(inputs)
-                        _, preds = torch.max(outputs, 1)
-                        
-                        if phase == 'train' and (use_cutmix or use_mixup):
-                            loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
-                        else:
-                            loss = criterion(outputs, labels)
+                optimizer.zero_grad()
+
+                for i, (inputs, labels) in enumerate(dataloaders[phase]):
+                    inputs = inputs.to(device)
+                    labels = labels.to(device)
 
                     if phase == 'train':
-                        loss = loss / gradient_accumulation_steps
-                        scaler.scale(loss).backward()
+                        if use_cutmix:
+                            inputs, targets_a, targets_b, lam = cutmix_data(inputs, labels)
+                        elif use_mixup:
+                            inputs, targets_a, targets_b, lam = mixup_data(inputs, labels)
 
-                        if (i + 1) % gradient_accumulation_steps == 0:
-                            scaler.step(optimizer)
-                            scaler.update()
-                            optimizer.zero_grad()
+                        inputs, targets_a, targets_b = inputs.to(device), targets_a.to(device), targets_b.to(device)
 
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
-                all_preds.extend(preds.cpu().numpy())
-                all_labels.extend(labels.cpu().numpy())
+                    with torch.set_grad_enabled(phase == 'train'):
+                        with autocast():
+                            outputs = model(inputs)
+                            _, preds = torch.max(outputs, 1)
+                            
+                            if phase == 'train' and (use_cutmix or use_mixup):
+                                loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
+                            else:
+                                loss = criterion(outputs, labels)
 
-            epoch_loss = running_loss / dataset_sizes[phase]
-            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+                        if phase == 'train':
+                            loss = loss / gradient_accumulation_steps
+                            scaler.scale(loss).backward()
 
-            precision = precision_score(all_labels, all_preds, average='weighted')
-            recall = recall_score(all_labels, all_preds, average='weighted')
-            f1 = f1_score(all_labels, all_preds, average='weighted')
+                            if (i + 1) % gradient_accumulation_steps == 0:
+                                scaler.step(optimizer)
+                                scaler.update()
+                                optimizer.zero_grad()
 
-            print(f'  {phase.capitalize()} Phase:')
-            print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
+                    running_loss += loss.item() * inputs.size(0)
+                    running_corrects += torch.sum(preds == labels.data)
+                    all_preds.extend(preds.cpu().numpy())
+                    all_labels.extend(labels.cpu().numpy())
 
-            if phase == 'val':
-                scheduler.step(epoch_loss)
-                early_stopping(epoch_loss, model)
-                if early_stopping.early_stop:
-                    print("Early stopping")
-                    model.load_state_dict(early_stopping.best_model_wts)
-                    return model
-                if epoch_acc > best_acc:
-                    best_acc = epoch_acc
-                    best_model_wts = copy.deepcopy(model.state_dict())
+                epoch_loss = running_loss / dataset_sizes[phase]
+                epoch_acc = running_corrects.double() / dataset_sizes[phase]
 
-        print()
+                precision = precision_score(all_labels, all_preds, average='weighted')
+                recall = recall_score(all_labels, all_preds, average='weighted')
+                f1 = f1_score(all_labels, all_preds, average='weighted')
 
-    print(f'Best val Acc: {best_acc:.4f}')
-    model.load_state_dict(best_model_wts)
-    return model
+                log_file.write(f'  {phase.capitalize()} Phase:\n')
+                log_file.write(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}\n')
+                print(f'  {phase.capitalize()} Phase:')
+                print(f'    Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f} | Precision: {precision:.4f} | Recall: {recall:.4f} | F1-Score: {f1:.4f}')
+
+                if phase == 'val':
+                    scheduler.step(epoch_loss)
+                    early_stopping(epoch_loss, model)
+                    if early_stopping.early_stop:
+                        log_file.write("Early stopping\n")
+                        print("Early stopping")
+                        model.load_state_dict(early_stopping.best_model_wts)
+                        return model
+                    if epoch_acc > best_acc:
+                        best_acc = epoch_acc
+                        best_model_wts = copy.deepcopy(model.state_dict())
+
+            log_file.write('\n')
+            print()
+
+        log_file.write(f'Best val Acc: {best_acc:.4f}\n')
+        print(f'Best val Acc: {best_acc:.4f}')
+        model.load_state_dict(best_model_wts)
+        return model
 
 # Khởi tạo mô hình kết hợp
 model = CombinedModel(efficientnet, mobilenet, resnet50, num_classes=len(dataset.classes)).to(device)
@@ -286,19 +313,12 @@ if torch.cuda.device_count() > 1:
 # Định nghĩa loss function và optimizer
 criterion = LabelSmoothingCrossEntropy(smoothing=0.1)
 optimizer = optim.AdamW(model.parameters(), lr=0.0001, weight_decay=0.0001)
-
-# Cosine Annealing Scheduler với Warmup
 scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1, eta_min=1e-12)
-
-# Initialize EarlyStopping
-early_stopping = EarlyStopping(patience=50, verbose=True)
-
+early_stopping = EarlyStopping(patience=25, verbose=True)
 scaler = GradScaler()
-
-# Initialize SWA
 swa_model = AveragedModel(model)
 swa_scheduler = SWALR(optimizer, swa_lr=0.05)
-swa_start = 150  # Example epoch to start SWA
+swa_start = 100  # Example epoch to start SWA
 
 # Huấn luyện mô hình
 model = train_model(model, criterion, optimizer, scheduler, early_stopping, num_epochs=200)
