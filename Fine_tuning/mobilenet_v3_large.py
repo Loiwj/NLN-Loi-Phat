@@ -27,6 +27,10 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 data_transforms = {
     'train': transforms.Compose([
         transforms.Resize((224, 224)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(30),
+        transforms.RandomAffine(degrees=30, translate=(0.1, 0.1), shear=10),
+        transforms.RandomErasing(p=0.5),
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]),
@@ -62,6 +66,13 @@ num_ftrs = model.classifier[3].in_features
 model.classifier[3] = nn.Linear(num_ftrs, len(dataset.classes))
 model = nn.DataParallel(model)  # Sử dụng DataParallel để sử dụng nhiều GPU
 model = model.to(device)
+# Fine-tuning the model
+for param in model.parameters():
+    param.requires_grad = False
+
+# Unfreeze the final layer
+for param in model.module._fc.parameters():
+    param.requires_grad = True
 
 # Early Stopping Class
 class EarlyStopping:
