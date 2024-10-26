@@ -59,36 +59,44 @@ val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=4
 dataloaders = {'train': train_loader, 'val': val_loader}
 dataset_sizes = {'train': len(train_dataset), 'val': len(val_dataset)}
 
-# Load MobileNetV3 Large
-mobilenet_v3_large = models.mobilenet_v3_large(pretrained=True)
+
+# Load ResNet-18
+resnet18 = models.resnet18(pretrained=True)
 
 # Chỉnh sửa lớp đầu ra cuối cùng
-num_ftrs_mobilenet = mobilenet_v3_large.classifier[3].in_features
-mobilenet_v3_large.classifier[3] = nn.Linear(num_ftrs_mobilenet, 1024)
+num_ftrs_resnet = resnet18.fc.in_features
+resnet18.fc = nn.Linear(num_ftrs_resnet, 1024)
 
+# Mô hình kết hợp
 class CustomModel(nn.Module):
-    def __init__(self, mobilenet_v3_large, num_classes):
+    def __init__(self, resnet18, num_classes):
         super(CustomModel, self).__init__()
-        self.mobilenet_v3_large = mobilenet_v3_large
+        self.resnet18 = resnet18
         self.fc1 = nn.Linear(1024, 1024)
         self.bn1 = nn.BatchNorm1d(1024)
+        self.dropout1 = nn.Dropout(0.2)
         self.fc2 = nn.Linear(1024, 512)
         self.bn2 = nn.BatchNorm1d(512)
+        self.dropout2 = nn.Dropout(0.2)
         self.fc3 = nn.Linear(512, 256)
         self.bn3 = nn.BatchNorm1d(256)
+        self.dropout3 = nn.Dropout(0.2)
         self.fc4 = nn.Linear(256, num_classes)
     
     def forward(self, x):
-        out1 = self.mobilenet_v3_large(x)
+        out1 = self.resnet18(x)
         combined_out = torch.relu(self.bn1(self.fc1(out1)))
+        combined_out = self.dropout1(combined_out)
         combined_out = torch.relu(self.bn2(self.fc2(combined_out)))
+        combined_out = self.dropout2(combined_out)
         combined_out = torch.relu(self.bn3(self.fc3(combined_out)))
+        combined_out = self.dropout3(combined_out)
         final_out = self.fc4(combined_out)
         return final_out
 
 # Instantiate the combined model
 num_classes = len(dataset.classes)
-model = CustomModel(mobilenet_v3_large, num_classes)
+model = CustomModel(resnet18, num_classes)
 
 # Sử dụng DataParallel để sử dụng nhiều GPU
 if torch.cuda.device_count() > 1:
@@ -137,7 +145,7 @@ def train_model(model, criterion, early_stopping, optimizer, num_epochs=50, pati
     best_acc = 0.0
 
     # Open a file to log the training process
-    with open('mobilenet_v3_large_log.csv', 'w') as log_file:
+    with open('resnet18_log.csv', 'w') as log_file:
         log_file.write('Epoch,Phase,Loss,Accuracy,Precision,Recall,F1-Score\n')
         for epoch in range(num_epochs):
             print(f'Epoch {epoch+1}/{num_epochs}')
@@ -232,7 +240,7 @@ def evaluate_model(model, dataloader):
     recall = recall_score(all_labels, all_preds, average='weighted')
     f1 = f1_score(all_labels, all_preds, average='weighted')
     accuracy = np.mean(np.array(all_preds) == np.array(all_labels))
-    with open('mobilenet_v3_large_log.csv', 'a') as log_file:
+    with open('resnet18_log.csv', 'a') as log_file:
         log_file.write('Evaluation Metrics:\n')
         log_file.write(f'Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}\n')
     print(f'Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}')
@@ -241,7 +249,7 @@ evaluate_model(model, dataloaders['val'])
 
 
 # Đánh giá mô hình trên tập dữ liệu kiểm tra
-with open('mobilenet_v3_large_log.csv', 'a') as log_file:
+with open('resnet18_log.csv', 'a') as log_file:
     log_file.write('\n')
     log_file.write('Evaluation on Test Set:\n')
 dataset_2_dir = '/kaggle/working/NLN-Loi-Phat/Dataset_2/'
@@ -251,7 +259,6 @@ print('Evaluation on Test Set:')
 evaluate_model(model, test_loader)
 
 # In ra ma trận nhầm lẫn (confusion matrix)
-
 
 def plot_confusion_matrix(model, dataloader, classes, name):
     model.eval()
@@ -276,9 +283,9 @@ def plot_confusion_matrix(model, dataloader, classes, name):
     plt.savefig(name)
 
 # Plot confusion matrix for validation set
-plot_confusion_matrix(model, dataloaders['val'], dataset.classes, 'mobilenet_v3_val_cm.png')
+plot_confusion_matrix(model, dataloaders['val'], dataset.classes, 'resnet18_val_cm.png')
 # Plot confusion matrix for test set
-plot_confusion_matrix(model, test_loader, dataset_2.classes, 'mobilenet_v3_test_cm.png')
+plot_confusion_matrix(model, test_loader, dataset_2.classes, 'resnet18_test_cm.png')
 
 # Capture the summary output
 summary_str = StringIO()
@@ -293,7 +300,7 @@ total_params = next(line for line in summary_lines if line.startswith('Total par
 trainable_params = next(line for line in summary_lines if line.startswith('Trainable params')).replace(',', '')
 
 # Write the required lines to the file
-with open('mobilenet_v3_large_log.csv', 'a') as f:
+with open('resnet18_log.csv', 'a') as f:
     f.write('Model Summary:\n')
     f.write(total_params + '\n')
     f.write(trainable_params + '\n')

@@ -80,7 +80,7 @@ class CustomModel(nn.Module):
         self.fc4 = nn.Linear(256, num_classes)
     
     def forward(self, x):
-        out1 = self.efficientnet(x)
+        out1 = self.resnet50(x)
         combined_out = torch.relu(self.bn1(self.fc1(out1)))
         combined_out = torch.relu(self.bn2(self.fc2(combined_out)))
         combined_out = torch.relu(self.bn3(self.fc3(combined_out)))

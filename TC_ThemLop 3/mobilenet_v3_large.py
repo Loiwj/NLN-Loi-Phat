@@ -72,17 +72,23 @@ class CustomModel(nn.Module):
         self.mobilenet_v3_large = mobilenet_v3_large
         self.fc1 = nn.Linear(1024, 1024)
         self.bn1 = nn.BatchNorm1d(1024)
+        self.dropout1 = nn.Dropout(0.2)
         self.fc2 = nn.Linear(1024, 512)
         self.bn2 = nn.BatchNorm1d(512)
+        self.dropout2 = nn.Dropout(0.2)
         self.fc3 = nn.Linear(512, 256)
         self.bn3 = nn.BatchNorm1d(256)
+        self.dropout3 = nn.Dropout(0.2)
         self.fc4 = nn.Linear(256, num_classes)
     
     def forward(self, x):
         out1 = self.mobilenet_v3_large(x)
         combined_out = torch.relu(self.bn1(self.fc1(out1)))
+        combined_out = self.dropout1(combined_out)
         combined_out = torch.relu(self.bn2(self.fc2(combined_out)))
+        combined_out = self.dropout2(combined_out)
         combined_out = torch.relu(self.bn3(self.fc3(combined_out)))
+        combined_out = self.dropout3(combined_out)
         final_out = self.fc4(combined_out)
         return final_out
 
