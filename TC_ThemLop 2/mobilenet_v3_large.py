@@ -59,22 +59,43 @@ val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=4
 dataloaders = {'train': train_loader, 'val': val_loader}
 dataset_sizes = {'train': len(train_dataset), 'val': len(val_dataset)}
 
-# Sử dụng mô hình ResNet18 cơ bản
-model = models.resnet18(pretrained=True)
-# Modify the final layer to match the number of classes in your dataset
-num_ftrs = model.fc.in_features
-model.fc = nn.Linear(num_ftrs, len(dataset.classes))
-model = nn.DataParallel(model)  # Sử dụng DataParallel để sử dụng nhiều GPU
+# Load MobileNetV3 Large
+mobilenet_v3_large = models.mobilenet_v3_large(pretrained=True)
+
+# Chỉnh sửa lớp đầu ra cuối cùng
+num_ftrs_mobilenet = mobilenet_v3_large.classifier[3].in_features
+mobilenet_v3_large.classifier[3] = nn.Linear(num_ftrs_mobilenet, 1024)
+
+class CustomModel(nn.Module):
+    def __init__(self, mobilenet_v3_large, num_classes):
+        super(CustomModel, self).__init__()
+        self.mobilenet_v3_large = mobilenet_v3_large
+        self.fc1 = nn.Linear(1024, 1024)
+        self.bn1 = nn.BatchNorm1d(1024)
+        self.fc2 = nn.Linear(1024, 512)
+        self.bn2 = nn.BatchNorm1d(512)
+        self.fc3 = nn.Linear(512, 256)
+        self.bn3 = nn.BatchNorm1d(256)
+        self.fc4 = nn.Linear(256, num_classes)
+    
+    def forward(self, x):
+        out1 = self.efficientnet(x)
+        combined_out = torch.relu(self.bn1(self.fc1(out1)))
+        combined_out = torch.relu(self.bn2(self.fc2(combined_out)))
+        combined_out = torch.relu(self.bn3(self.fc3(combined_out)))
+        final_out = self.fc4(combined_out)
+        return final_out
+
+# Instantiate the combined model
+num_classes = len(dataset.classes)
+model = CustomModel(mobilenet_v3_large, num_classes)
+
+# Sử dụng DataParallel để sử dụng nhiều GPU
+if torch.cuda.device_count() > 1:
+    print(f"Using {torch.cuda.device_count()} GPUs")
+    model = nn.DataParallel(model)
+
 model = model.to(device)
-
-# Fine-tuning the model
-for param in model.parameters():
-    param.requires_grad = False
-
-# Unfreeze the final layer
-for param in model.module._fc.parameters():
-    param.requires_grad = True
-
 # Early Stopping Class
 class EarlyStopping:
     def __init__(self, patience=7, verbose=False):
@@ -116,7 +137,7 @@ def train_model(model, criterion, early_stopping, optimizer, num_epochs=50, pati
     best_acc = 0.0
 
     # Open a file to log the training process
-    with open('resnet18_log.csv', 'w') as log_file:
+    with open('mobilenet_v3_large_log.csv', 'w') as log_file:
         log_file.write('Epoch,Phase,Loss,Accuracy,Precision,Recall,F1-Score\n')
         for epoch in range(num_epochs):
             print(f'Epoch {epoch+1}/{num_epochs}')
@@ -190,9 +211,9 @@ def train_model(model, criterion, early_stopping, optimizer, num_epochs=50, pati
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.0001)
 scaler = GradScaler()  # Initialize GradScaler for mixed precision
-early_stopping = EarlyStopping(patience=10, verbose=True)
+early_stopping = EarlyStopping(patience=25, verbose=True)
 # Huấn luyện mô hình
-model = train_model(model, criterion, early_stopping, optimizer, num_epochs=100)
+model = train_model(model, criterion, early_stopping, optimizer, num_epochs=200)
 
 # Đánh giá mô hình
 def evaluate_model(model, dataloader):
@@ -211,7 +232,7 @@ def evaluate_model(model, dataloader):
     recall = recall_score(all_labels, all_preds, average='weighted')
     f1 = f1_score(all_labels, all_preds, average='weighted')
     accuracy = np.mean(np.array(all_preds) == np.array(all_labels))
-    with open('resnet18_log.csv', 'a') as log_file:
+    with open('mobilenet_v3_large_log.csv', 'a') as log_file:
         log_file.write('Evaluation Metrics:\n')
         log_file.write(f'Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}\n')
     print(f'Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}')
@@ -220,7 +241,7 @@ evaluate_model(model, dataloaders['val'])
 
 
 # Đánh giá mô hình trên tập dữ liệu kiểm tra
-with open('resnet18_log.csv', 'a') as log_file:
+with open('mobilenet_v3_large_log.csv', 'a') as log_file:
     log_file.write('\n')
     log_file.write('Evaluation on Test Set:\n')
 dataset_2_dir = '/kaggle/working/NLN-Loi-Phat/Dataset_2/'
@@ -230,6 +251,7 @@ print('Evaluation on Test Set:')
 evaluate_model(model, test_loader)
 
 # In ra ma trận nhầm lẫn (confusion matrix)
+
 
 def plot_confusion_matrix(model, dataloader, classes, name):
     model.eval()
@@ -254,9 +276,9 @@ def plot_confusion_matrix(model, dataloader, classes, name):
     plt.savefig(name)
 
 # Plot confusion matrix for validation set
-plot_confusion_matrix(model, dataloaders['val'], dataset.classes, 'resnet18_val_cm.png')
+plot_confusion_matrix(model, dataloaders['val'], dataset.classes, 'mobilenet_v3_val_cm.png')
 # Plot confusion matrix for test set
-plot_confusion_matrix(model, test_loader, dataset_2.classes, 'resnet18_test_cm.png')
+plot_confusion_matrix(model, test_loader, dataset_2.classes, 'mobilenet_v3_test_cm.png')
 
 # Capture the summary output
 summary_str = StringIO()
@@ -271,7 +293,7 @@ total_params = next(line for line in summary_lines if line.startswith('Total par
 trainable_params = next(line for line in summary_lines if line.startswith('Trainable params')).replace(',', '')
 
 # Write the required lines to the file
-with open('resnet18_log.csv', 'a') as f:
+with open('mobilenet_v3_large_log.csv', 'a') as f:
     f.write('Model Summary:\n')
     f.write(total_params + '\n')
     f.write(trainable_params + '\n')

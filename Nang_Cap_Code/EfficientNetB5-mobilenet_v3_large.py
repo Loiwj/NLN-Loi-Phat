@@ -57,12 +57,6 @@ dataset_sizes = {'train': len(train_dataset), 'val': len(val_dataset)}
 efficientnet = EfficientNet.from_pretrained('efficientnet-b5')
 mobilenet = models.mobilenet_v3_large(pretrained=True)
 
-# Fine-tune cả hai mô hình
-for param in efficientnet.parameters():
-    param.requires_grad = True
-for param in mobilenet.parameters():
-    param.requires_grad = True
-
 # Chỉnh sửa lớp đầu ra cuối cùng
 num_ftrs_efficient = efficientnet._fc.in_features
 efficientnet._fc = nn.Linear(num_ftrs_efficient, 512)
