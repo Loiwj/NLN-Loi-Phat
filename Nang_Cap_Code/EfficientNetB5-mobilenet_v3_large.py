@@ -74,15 +74,20 @@ class CombinedModel(nn.Module):
         self.bn1 = nn.BatchNorm1d(1024)
         self.fc2 = nn.Linear(1024, 512)
         self.bn2 = nn.BatchNorm1d(512)
-        self.fc3 = nn.Linear(512, num_classes)
+        self.fc3 = nn.Linear(512, 256)
+        self.bn3 = nn.BatchNorm1d(256)
+        self.fc4 = nn.Linear(256, num_classes)
+        self.dropout = nn.Dropout(0.5)
     
     def forward(self, x):
         out1 = self.efficientnet(x)
         out2 = self.mobilenet(x)
         combined_out = torch.cat((out1, out2), dim=1)
         combined_out = torch.relu(self.bn1(self.fc1(combined_out)))
+        combined_out = self.dropout(combined_out)
         combined_out = torch.relu(self.bn2(self.fc2(combined_out)))
-        final_out = self.fc3(combined_out)
+        combined_out = torch.relu(self.bn3(self.fc3(combined_out)))
+        final_out = self.fc4(combined_out)
         return final_out
 
 # Thêm Label Smoothing CrossEntropy
